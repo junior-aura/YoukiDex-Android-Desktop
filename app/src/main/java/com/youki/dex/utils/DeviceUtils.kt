@@ -43,7 +43,11 @@ object DeviceUtils {
     const val HEADS_UP_ENABLED = "heads_up_notifications_enabled"
     const val ENABLE_TASKBAR = "enable_taskbar"
     const val SETTING_OVERLAYS = "secure_overlay_settings"
-    private const val SERVICE_NAME = "com.youki.dex/com.youki.dex.services.DockService"
+    // Built from the running package instead of a hardcoded "com.youki.dex":
+    // with an applicationIdSuffix (e.g. the ".debug" build) a hardcoded name
+    // makes enableService() switch on the *release* app's service instead.
+    private fun serviceName(context: Context) =
+        "${context.packageName}/com.youki.dex.services.DockService"
     private const val ENABLED_ACCESSIBILITY_SERVICES = "enabled_accessibility_services"
 
     /**
@@ -923,10 +927,11 @@ object DeviceUtils {
 
     //Service control
     fun enableService(context: Context) {
+        val svc = serviceName(context)
         val services = getSecureSetting(context, ENABLED_ACCESSIBILITY_SERVICES, "")
-        if (!services.contains(SERVICE_NAME)) {
+        if (!services.contains(svc)) {
             val newServices: String =
-                if (services.isEmpty()) SERVICE_NAME else "$services:$SERVICE_NAME"
+                if (services.isEmpty()) svc else "$services:$svc"
             putSecureSetting(context, ENABLED_ACCESSIBILITY_SERVICES, newServices)
         }
         // FIX: appending to enabled_accessibility_services alone isn't enough —
@@ -940,16 +945,17 @@ object DeviceUtils {
     }
 
     fun disableService(context: Context) {
+        val svc = serviceName(context)
         val services = getSecureSetting(context, ENABLED_ACCESSIBILITY_SERVICES, "")
-        if (!services.contains(SERVICE_NAME)) return
+        if (!services.contains(svc)) return
         var newServices = ""
-        if (services.contains("$SERVICE_NAME:")) newServices = services.replace(
-            "$SERVICE_NAME:",
+        if (services.contains("$svc:")) newServices = services.replace(
+            "$svc:",
             ""
-        ) else if (services.contains(":$SERVICE_NAME")) newServices = services.replace(
-            ":$SERVICE_NAME",
+        ) else if (services.contains(":$svc")) newServices = services.replace(
+            ":$svc",
             ""
-        ) else if (services.contains(SERVICE_NAME)) newServices = services.replace(SERVICE_NAME, "")
+        ) else if (services.contains(svc)) newServices = services.replace(svc, "")
         putSecureSetting(context, ENABLED_ACCESSIBILITY_SERVICES, newServices)
     }
 

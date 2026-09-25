@@ -29,6 +29,14 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        // kit-debug: side-by-side install next to the official release.
+        // A different applicationId means a different package, so this build
+        // never replaces (or conflicts with) the official APK, and it is
+        // debuggable, which unlocks run-as and heap dumps for profiling.
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-kit-debug"
+        }
     }
 
     lint {
