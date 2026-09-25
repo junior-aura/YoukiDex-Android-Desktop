@@ -2017,6 +2017,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 return
             }
 
+            if (smartBounds != null && packageName != null)
+                fitToClampedTop(packageName, smartBounds)
+
             if (!wasAlreadyRunning && packageName != null && launchMode != "fullscreen") {
                 // 400ms: long enough for the system to finish creating the
                 // Task on a genuine cold start (150ms was already the gap
@@ -2083,10 +2086,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 ?.takeIf { it.topActivity?.packageName == packageName }
                 ?.id ?: -1
             when {
-                taskId != -1 -> if (bounds != null) {
+                taskId != -1 -> if (bounds != null)
                     AppUtils.resizeTaskTo(context, bounds, taskId)
-                    fitToClampedTop(packageName, bounds, taskId)
-                } else
+                else
                     AppUtils.resizeTask(context, launchMode, taskId, dockHeight)
                 attempt == 1 -> checkTaskCreatedOrRetry(packageName, launchMode, attempt = 2, bounds = bounds)
                 else -> {
@@ -4317,32 +4319,42 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     /**
-     * Lowest top edge the window manager allowed a freeform window, learned
-     * from real launches (0 = not seen yet). Measured on a SM-A055M: status
-     * bar 45 px, yet every freeform window is shifted to top >= 55 - moved,
-     * not shrunk, so a window planned to the bottom edge overflowed it by
-     * 10 px. No inset reports that value, hence learning it.
+     * Lowest top edge the window manager allows a freeform window, learned
+     * from real launches and kept per orientation (0 = not seen yet).
+     * Measured on a SM-A055M: status bar 45 px, yet every freeform window is
+     * shifted to top >= 55 - moved, not shrunk, so a window planned to the
+     * bottom edge overflowed it by 10 px. No inset reports that value.
      */
-    private var freeformMinTop = 0
+    private fun freeformMinTopKey() = "freeform_min_top_" + resources.configuration.orientation
+
+    private fun freeformMinTop() = sharedPreferences.getInt(freeformMinTopKey(), 0)
 
     /**
-     * After a launch with explicit bounds, see where the window really
-     * landed. If the system pushed it down, remember that top for the next
-     * plans and shrink this window back inside the planned bottom edge
-     * (the resize needs Shizuku/root; the learned top works without it).
+     * After a "smart" launch, see where the window really landed. Same size
+     * but lower top is the window manager's shift: remember that top for the
+     * next plans and, with Shizuku, shrink this window back inside the planned
+     * bottom edge. Not wired to checkTaskCreatedOrRetry on purpose - that
+     * relies on getRunningTasks(), which only returns this app's own tasks.
      */
-    private fun fitToClampedTop(pkg: String, planned: android.graphics.Rect, taskId: Int) {
+    private fun fitToClampedTop(pkg: String, planned: android.graphics.Rect) {
         dockHandler.postDelayed({
             val actual = appWindowBounds(pkg) ?: return@postDelayed
-            if (actual.top <= planned.top) return@postDelayed
-            freeformMinTop = maxOf(freeformMinTop, actual.top)
-            if (actual.bottom > planned.bottom && planned.bottom - actual.top > 0)
-                AppUtils.resizeTaskTo(
-                    context,
-                    android.graphics.Rect(planned.left, actual.top, planned.right, planned.bottom),
-                    taskId
-                )
-        }, 600)
+            if (actual.top <= planned.top || actual.width() != planned.width() ||
+                actual.height() != planned.height()) return@postDelayed
+            if (actual.top > freeformMinTop())
+                sharedPreferences.edit().putInt(freeformMinTopKey(), actual.top).apply()
+            if (actual.bottom <= planned.bottom || planned.bottom <= actual.top) return@postDelayed
+            val target = android.graphics.Rect(planned.left, actual.top, planned.right, planned.bottom)
+            Thread {
+                val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+                if (!shizuku.hasPermission) return@Thread
+                val taskId = shizuku.runShellSync("am stack list")?.lineSequence()
+                    ?.firstOrNull { it.contains("visible=true") && it.contains("topActivity=ComponentInfo{$pkg/") }
+                    ?.substringAfter("taskId=")?.substringBefore(":")?.trim()?.toIntOrNull()
+                    ?: return@Thread
+                AppUtils.resizeTaskTo(context, target, taskId)
+            }.start()
+        }, 900)
     }
 
     /** Screen bounds of [pkg]'s app window on the default display, if visible. */
@@ -4392,7 +4404,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // older APIs, or a context that reports no insets: at least the status bar
         if (!gotInsets) area.top += DeviceUtils.getStatusBarHeight(context)
         // the window manager's own floor for freeform tops, once observed
-        area.top = maxOf(area.top, freeformMinTop)
+        area.top = maxOf(area.top, freeformMinTop())
         // a dock that stays on screen takes its edge; an on-demand one does not
         if (isPinned || !isOnDemandDock()) {
             if (com.youki.dex.utils.DockPositionUtils.get(sharedPreferences) ==
