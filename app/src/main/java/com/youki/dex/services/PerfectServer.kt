@@ -1822,8 +1822,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         if (AppUtils.isGame(packageManager, app)
             && sharedPreferences.getBoolean("launch_games_fullscreen", false))
             return "fullscreen"
-        // Default is always windowed — "standard" = freeform window
-        return sharedPreferences.getString("launch_mode", "standard") ?: "standard"
+        // Default is always windowed. ClauDEX: the default is "smart" (resolved
+        // per launch in launchApp from what is on screen - see WindowPlanner).
+        return sharedPreferences.getString("launch_mode", "smart") ?: "smart"
     }
 
     /**
@@ -1904,7 +1905,25 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             )
                 db.saveLaunchMode(packageName, launchMode)
 
-        val options = AppUtils.makeActivityOptions(context, launchMode, dockHeight, displayId)
+        // ClauDEX "smart": resolved here, against what is on screen right now,
+        // and never written back - remember_launch_mode above stored "smart"
+        // itself, so the next launch is decided fresh instead of freezing the
+        // first result for that app.
+        var smartBounds: android.graphics.Rect? = null
+        if (launchMode == "smart") {
+            if (displayId == Display.DEFAULT_DISPLAY) {
+                val plan = com.youki.dex.utils.WindowPlanner.plan(smartAvailableArea(), visibleAppWindows())
+                smartBounds = plan.bounds
+                if (smartBounds == null) launchMode = "standard"
+            } else {
+                launchMode = "standard"
+            }
+        }
+
+        val options = if (smartBounds != null)
+            AppUtils.makeActivityOptionsForBounds(context, smartBounds, displayId)
+        else
+            AppUtils.makeActivityOptions(context, launchMode, dockHeight, displayId)
 
         //Used only for work apps
         if (app != null && app.userHandle != Process.myUserHandle())
@@ -2009,7 +2028,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 // Not a fixed fix for every device/timing — see this
                 // change's own commit message for that caveat — but doing
                 // nothing left the bug fully unaddressed.
-                checkTaskCreatedOrRetry(packageName, launchMode, attempt = 1)
+                checkTaskCreatedOrRetry(packageName, launchMode, attempt = 1, bounds = smartBounds)
             }
         }
 
@@ -2053,7 +2072,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      * cold start without still reporting real failures (crash,
      * OOM-killed process) so late the user's already moved on.
      */
-    private fun checkTaskCreatedOrRetry(packageName: String, launchMode: String, attempt: Int) {
+    private fun checkTaskCreatedOrRetry(
+        packageName: String, launchMode: String, attempt: Int,
+        bounds: android.graphics.Rect? = null
+    ) {
         val delayMs = if (attempt == 1) 400L else 800L
         dockHandler.postDelayed({
             val runningTasks = activityManager.getRunningTasks(1)
@@ -2061,8 +2083,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 ?.takeIf { it.topActivity?.packageName == packageName }
                 ?.id ?: -1
             when {
-                taskId != -1 -> AppUtils.resizeTask(context, launchMode, taskId, dockHeight)
-                attempt == 1 -> checkTaskCreatedOrRetry(packageName, launchMode, attempt = 2)
+                taskId != -1 -> if (bounds != null)
+                    AppUtils.resizeTaskTo(context, bounds, taskId)
+                else
+                    AppUtils.resizeTask(context, launchMode, taskId, dockHeight)
+                attempt == 1 -> checkTaskCreatedOrRetry(packageName, launchMode, attempt = 2, bounds = bounds)
                 else -> {
                     // Both checks failed — this is the "app completely
                     // fails to open" half of the user report, distinct from
@@ -4288,6 +4313,47 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             if (r.width() > 0 && r.height() > 0) out.add(r)
         }
         return out
+    }
+
+    /**
+     * Area a new window may use, in screen px: the display minus the system
+     * bars that are ACTUALLY visible right now (status/navigation bars show up
+     * as edge-spanning TYPE_SYSTEM windows), minus the dock only when it is
+     * pinned. makeLaunchBounds' "maximized" subtracts the status bar height
+     * even while YoukiDEX hides it, which left a ~45 px gap on this layout.
+     */
+    private fun smartAvailableArea(): android.graphics.Rect {
+        val dm = DeviceUtils.getDisplayMetrics(context, Display.DEFAULT_DISPLAY)
+        val w = dm.widthPixels
+        val h = dm.heightPixels
+        val area = android.graphics.Rect(0, 0, w, h)
+        val list = try { windows } catch (e: Exception) { emptyList() }
+        for (win in list) {
+            if (win.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM) continue
+            if (Build.VERSION.SDK_INT >= 30 && win.displayId != Display.DEFAULT_DISPLAY) continue
+            // our own overlays (dock, handle, corners) are not system bars
+            val pkg = try { win.root?.packageName?.toString() } catch (e: Exception) { null }
+            if (pkg == packageName) continue
+            val b = android.graphics.Rect()
+            win.getBoundsInScreen(b)
+            val spansWidth = b.width() * 10 >= w * 9
+            val spansHeight = b.height() * 10 >= h * 9
+            when {
+                spansWidth && b.top <= 0 && b.height() * 5 < h -> area.top = maxOf(area.top, b.bottom)
+                spansWidth && b.bottom >= h && b.height() * 5 < h -> area.bottom = minOf(area.bottom, b.top)
+                spansHeight && b.left <= 0 && b.width() * 5 < w -> area.left = maxOf(area.left, b.right)
+                spansHeight && b.right >= w && b.width() * 5 < w -> area.right = minOf(area.right, b.left)
+            }
+        }
+        // a dock that stays on screen takes its edge; an on-demand one does not
+        if (isPinned || !isOnDemandDock()) {
+            if (com.youki.dex.utils.DockPositionUtils.get(sharedPreferences) ==
+                com.youki.dex.utils.DockPositionUtils.Position.TOP)
+                area.top = maxOf(area.top, dockHeight)
+            else
+                area.bottom = minOf(area.bottom, h - dockHeight)
+        }
+        return area
     }
 
     /** The collapsed handle becomes a thin, faint pill centered on the dock

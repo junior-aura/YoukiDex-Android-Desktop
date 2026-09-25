@@ -73,12 +73,14 @@
     </string-array>
 
     <string-array name="launch_modes">
+        <item>@string/launch_smart</item>
         <item>@string/standard</item>
         <item>@string/maximized</item>
         <item>@string/portrait</item>
         <item>@string/fullscreen</item>
     </string-array>
     <string-array name="launch_mode_values">
+        <item>smart</item>
         <item>standard</item>
         <item>maximized</item>
         <item>portrait</item>

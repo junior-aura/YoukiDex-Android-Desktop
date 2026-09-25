@@ -41,7 +41,7 @@
             android:entryValues="@array/launch_mode_values" 
             android:key="launch_mode"
             android:title="@string/launch_mode_title"
-            android:defaultValue="standard" />
+            android:defaultValue="smart" />
         <SwitchPreferenceCompat
             android:key="remember_launch_mode"
             android:title="@string/remember_launch_mode_title"

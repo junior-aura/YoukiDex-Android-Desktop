@@ -384,7 +384,10 @@ object AppUtils {
                 bottom = usableHeight + dockHeight - top
             }
 
-            "maximized" -> {
+            // ClauDEX: "smart" is resolved in PerfectServer.launchApp from what is
+            // on screen; if it ever reaches here unresolved, fall back to
+            // maximized instead of the empty Rect the missing branch produced.
+            "maximized", "smart" -> {
                 right = deviceWidth
                 bottom = usableHeight
             }
@@ -464,8 +467,24 @@ object AppUtils {
             return options
         }
 
+        applyFreeformBounds(options, makeLaunchBounds(context, mode, dockHeight, display))
+        return options
+    }
+
+    /**
+     * ClauDEX: freeform launch into an explicit rectangle (the "smart" launch
+     * mode computes it from what is already on screen, see WindowPlanner).
+     */
+    fun makeActivityOptionsForBounds(context: Context, bounds: Rect, displayId: Int): ActivityOptions {
+        val options = ActivityOptions.makeBasic()
+        if (Build.VERSION.SDK_INT >= 26) options.setLaunchDisplayId(displayId)
+        if (DeviceUtils.isPureHarmonyOS()) return options
+        applyFreeformBounds(options, bounds)
+        return options
+    }
+
+    private fun applyFreeformBounds(options: ActivityOptions, bounds: Rect) {
         // FREEFORM — setLaunchBounds must be called before setWindowingMode on all API levels
-        val bounds = makeLaunchBounds(context, mode, dockHeight, display)
         options.setLaunchBounds(bounds)
         setWindowingMode(options, WINDOWING_MODE_FREEFORM)
 
@@ -493,8 +512,6 @@ object AppUtils {
                 f.set(options, WINDOWING_MODE_FREEFORM)
             } catch (e: Exception) {}
         }
-
-        return options
     }
 
     /**
@@ -717,7 +734,12 @@ object AppUtils {
 
     fun resizeTask(context: Context, mode: String, taskId: Int, dockHeight: Int) {
         if (taskId < 0) return
-        val bounds    = makeLaunchBounds(context, mode, dockHeight)
+        resizeTaskTo(context, makeLaunchBounds(context, mode, dockHeight), taskId)
+    }
+
+    /** ClauDEX: same shell fallback chain, for an explicit rectangle. */
+    fun resizeTaskTo(context: Context, bounds: Rect, taskId: Int) {
+        if (taskId < 0) return
         val modeCmd   = "am task set-windowing-mode $taskId 5"
         val resizeCmd = "am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}"
 
