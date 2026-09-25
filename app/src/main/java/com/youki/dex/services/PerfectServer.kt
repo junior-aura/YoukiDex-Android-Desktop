@@ -4316,35 +4316,36 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     /**
-     * Area a new window may use, in screen px: the display minus the system
-     * bars that are ACTUALLY visible right now (status/navigation bars show up
-     * as edge-spanning TYPE_SYSTEM windows), minus the dock only when it is
-     * pinned. makeLaunchBounds' "maximized" subtracts the status bar height
-     * even while YoukiDEX hides it, which left a ~45 px gap on this layout.
+     * Area a new window may use, in screen px: the display minus the space the
+     * status and navigation bars RESERVE, minus the dock only when it is pinned.
+     *
+     * Reserved, not "currently visible": measured on a SM-A055M, the plan is
+     * made while the desktop is in front with the bars hidden (immersive), the
+     * bars come back as soon as the app opens, and the system then pushed a
+     * full-height window down by the status bar - 55 px of it ended up below
+     * the screen edge, with the navigation bar drawn over its right side.
+     * Insets ignoring visibility are what the window manager actually honors.
      */
     private fun smartAvailableArea(): android.graphics.Rect {
         val dm = DeviceUtils.getDisplayMetrics(context, Display.DEFAULT_DISPLAY)
         val w = dm.widthPixels
         val h = dm.heightPixels
         val area = android.graphics.Rect(0, 0, w, h)
-        val list = try { windows } catch (e: Exception) { emptyList() }
-        for (win in list) {
-            if (win.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM) continue
-            if (Build.VERSION.SDK_INT >= 30 && win.displayId != Display.DEFAULT_DISPLAY) continue
-            // our own overlays (dock, handle, corners) are not system bars
-            val pkg = try { win.root?.packageName?.toString() } catch (e: Exception) { null }
-            if (pkg == packageName) continue
-            val b = android.graphics.Rect()
-            win.getBoundsInScreen(b)
-            val spansWidth = b.width() * 10 >= w * 9
-            val spansHeight = b.height() * 10 >= h * 9
-            when {
-                spansWidth && b.top <= 0 && b.height() * 5 < h -> area.top = maxOf(area.top, b.bottom)
-                spansWidth && b.bottom >= h && b.height() * 5 < h -> area.bottom = minOf(area.bottom, b.top)
-                spansHeight && b.left <= 0 && b.width() * 5 < w -> area.left = maxOf(area.left, b.right)
-                spansHeight && b.right >= w && b.width() * 5 < w -> area.right = minOf(area.right, b.left)
-            }
+        var gotInsets = false
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val ins = wm.maximumWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                    android.view.WindowInsets.Type.statusBars() or
+                        android.view.WindowInsets.Type.navigationBars()
+                )
+                area.left += ins.left; area.top += ins.top
+                area.right -= ins.right; area.bottom -= ins.bottom
+                gotInsets = ins.left or ins.top or ins.right or ins.bottom != 0
+            } catch (e: Exception) {}
         }
+        // older APIs, or a context that reports no insets: at least the status bar
+        if (!gotInsets) area.top += DeviceUtils.getStatusBarHeight(context)
         // a dock that stays on screen takes its edge; an on-demand one does not
         if (isPinned || !isOnDemandDock()) {
             if (com.youki.dex.utils.DockPositionUtils.get(sharedPreferences) ==
