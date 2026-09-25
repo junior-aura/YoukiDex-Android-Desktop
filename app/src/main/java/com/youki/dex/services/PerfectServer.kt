@@ -2017,6 +2017,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 return
             }
 
+            android.util.Log.i("ClauDEX", "launch $packageName mode=$launchMode smart=$smartBounds")
             if (smartBounds != null && packageName != null)
                 fitToClampedTop(packageName, smartBounds)
 
@@ -4341,9 +4342,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // accessibility reports the window CLIPPED to the screen (measured:
             // [0,55][1510,720] for a real [0,55][1510,730]), so the signature is
             // same left/right edges and a lower top; the height is not comparable
-            val actual = appWindowBounds(pkg) ?: return@postDelayed
-            if (actual.top <= planned.top || actual.left != planned.left ||
-                actual.right != planned.right) return@postDelayed
+            val actual = shiftedWindow(planned)
+            android.util.Log.i("ClauDEX", "fit $pkg planned=$planned actual=$actual floor=${freeformMinTop()}")
+            if (actual == null) return@postDelayed
             if (actual.top > freeformMinTop())
                 sharedPreferences.edit().putInt(freeformMinTopKey(), actual.top).apply()
             // the height was kept, so the real bottom went down by the same shift
@@ -4351,30 +4352,29 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             val target = android.graphics.Rect(planned.left, actual.top, planned.right, planned.bottom)
             Thread {
                 val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
-                if (!shizuku.hasPermission) return@Thread
+                if (!shizuku.hasPermission) {
+                    android.util.Log.i("ClauDEX", "fit: no Shizuku, floor learned only")
+                    return@Thread
+                }
                 val taskId = shizuku.runShellSync("am stack list")?.lineSequence()
                     ?.firstOrNull { it.contains("visible=true") && it.contains("topActivity=ComponentInfo{$pkg/") }
                     ?.substringAfter("taskId=")?.substringBefore(":")?.trim()?.toIntOrNull()
-                    ?: return@Thread
-                AppUtils.resizeTaskTo(context, target, taskId)
+                android.util.Log.i("ClauDEX", "fit: task=$taskId -> $target")
+                if (taskId != null) AppUtils.resizeTaskTo(context, target, taskId)
             }.start()
         }, 900)
     }
 
-    /** Screen bounds of [pkg]'s app window on the default display, if visible. */
-    private fun appWindowBounds(pkg: String): android.graphics.Rect? {
-        val list = try { windows } catch (e: Exception) { return null }
-        for (w in list) {
-            if (w.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
-            if (Build.VERSION.SDK_INT >= 30 && w.displayId != Display.DEFAULT_DISPLAY) continue
-            val owner = try { w.root?.packageName?.toString() } catch (e: Exception) { null }
-            if (owner != pkg) continue
-            val r = android.graphics.Rect()
-            w.getBoundsInScreen(r)
-            if (r.width() > 0 && r.height() > 0) return r
+    /**
+     * The app window the window manager shifted down from [planned]: same
+     * left/right edges, lower top. Matched by geometry, not by owner - right
+     * after a launch the window's root node is often still null, so its
+     * package cannot be read yet.
+     */
+    private fun shiftedWindow(planned: android.graphics.Rect): android.graphics.Rect? =
+        visibleAppWindows().firstOrNull {
+            it.left == planned.left && it.right == planned.right && it.top > planned.top
         }
-        return null
-    }
 
     /**
      * Area a new window may use, in screen px: the display minus the space the
