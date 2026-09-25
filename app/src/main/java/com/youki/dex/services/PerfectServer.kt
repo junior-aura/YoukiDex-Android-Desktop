@@ -4338,12 +4338,16 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      */
     private fun fitToClampedTop(pkg: String, planned: android.graphics.Rect) {
         dockHandler.postDelayed({
+            // accessibility reports the window CLIPPED to the screen (measured:
+            // [0,55][1510,720] for a real [0,55][1510,730]), so the signature is
+            // same left/right edges and a lower top; the height is not comparable
             val actual = appWindowBounds(pkg) ?: return@postDelayed
-            if (actual.top <= planned.top || actual.width() != planned.width() ||
-                actual.height() != planned.height()) return@postDelayed
+            if (actual.top <= planned.top || actual.left != planned.left ||
+                actual.right != planned.right) return@postDelayed
             if (actual.top > freeformMinTop())
                 sharedPreferences.edit().putInt(freeformMinTopKey(), actual.top).apply()
-            if (actual.bottom <= planned.bottom || planned.bottom <= actual.top) return@postDelayed
+            // the height was kept, so the real bottom went down by the same shift
+            if (planned.bottom <= actual.top) return@postDelayed
             val target = android.graphics.Rect(planned.left, actual.top, planned.right, planned.bottom)
             Thread {
                 val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
