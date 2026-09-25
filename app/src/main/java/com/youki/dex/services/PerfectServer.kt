@@ -292,6 +292,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     // strip and dismissed by a tap outside it or by launching an app.
     private var dockPeeking = false
     private val onDemandHandler = Handler(Looper.getMainLooper())
+    // Post-launch checks (task retry, clamp fit). Not dockHandler: showDock()
+    // and hideDock() clear every dockHandler message, and the on-demand dock
+    // hides on each launch - which silently cancelled these checks.
+    private val launchHandler = Handler(Looper.getMainLooper())
     private val onDemandEval = Runnable { evaluateOnDemandDock() }
     private var handleDownY = -1f
     private var systemApp = false
@@ -2081,7 +2085,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         bounds: android.graphics.Rect? = null
     ) {
         val delayMs = if (attempt == 1) 400L else 800L
-        dockHandler.postDelayed({
+        launchHandler.postDelayed({
             val runningTasks = activityManager.getRunningTasks(1)
             val taskId = runningTasks.firstOrNull()
                 ?.takeIf { it.topActivity?.packageName == packageName }
@@ -4338,7 +4342,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      * relies on getRunningTasks(), which only returns this app's own tasks.
      */
     private fun fitToClampedTop(pkg: String, planned: android.graphics.Rect) {
-        dockHandler.postDelayed({
+        launchHandler.postDelayed({
             // accessibility reports the window CLIPPED to the screen (measured:
             // [0,55][1510,720] for a real [0,55][1510,730]), so the signature is
             // same left/right edges and a lower top; the height is not comparable
@@ -4562,6 +4566,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     override fun onDestroy() {
         serviceScope.cancel() // Cancel all running coroutines to prevent leaks
+        launchHandler.removeCallbacksAndMessages(null)
+        onDemandHandler.removeCallbacksAndMessages(null)
         castManager?.destroy()
         DeviceUtils.hideStatusBar(this, false)
         // Previously broken (stuck in landscape until Force Stop): freezeRotation(true) is
