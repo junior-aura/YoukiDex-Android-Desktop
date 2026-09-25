@@ -62,8 +62,19 @@ class ShizukoManager private constructor(private val context: Context) {
                 }
                 add("appops set $pkg SYSTEM_ALERT_WINDOW allow")
                 add("appops set $pkg READ_MEDIA_VISUAL_USER_SELECTED allow")
-                add("settings put secure enabled_notification_listeners $notifService")
-                add("dpm set-active-admin $adminRcv")
+                // ClauDEX: APPEND the listener instead of replacing the whole list.
+                // "settings put secure enabled_notification_listeners <ours>" wiped
+                // every other listener on the device (Android Auto, the stock
+                // launcher's badges...), and this batch re-runs on every Shizuku
+                // bind, so the wipe would repeat after each reboot.
+                add("cmd notification allow_listener $notifService")
+                // ClauDEX: device admin is only the pre-API-28 way to lock the
+                // screen (DeviceUtils.lockScreen). On 28+ PerfectServer.lockScreen()
+                // uses GLOBAL_ACTION_LOCK_SCREEN, so making the app a device
+                // administrator there buys nothing and blocks uninstalling it.
+                if (sdkInt < 28) {
+                    add("dpm set-active-admin $adminRcv")
+                }
 
                 // ── Bluetooth (Android 12+ runtime permission) — MainActivity's
                 // updatePermissionsStatus() checks BLUETOOTH_CONNECT via
@@ -85,9 +96,11 @@ class ShizukoManager private constructor(private val context: Context) {
 
                 // ── "Overlays in Settings" toggle — MainActivity's
                 // settingsOverlaysAllowed checks DeviceUtils.SETTING_OVERLAYS
-                // ("secure_overlay_settings"); without this the dialog keeps
-                // showing it as missing even though every other grant succeeded.
-                add("settings put secure secure_overlay_settings 1")
+                // ("secure_overlay_settings").
+                // ClauDEX: NOT written automatically. It is a device-wide switch
+                // that lets ANY app with overlay permission draw over Settings
+                // screens (the stock tapjacking protection), not just this one.
+                // It stays a manual choice in the app's own settings.
 
                 // NOTE: Accessibility service (DockService) is deliberately
                 // NOT auto-enabled here. Writing WRITE_SECURE_SETTINGS itself
