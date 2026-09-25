@@ -24,9 +24,15 @@ android {
         }
     }
 
+    // One stable key for both variants, supplied by CI (KIT_DEBUG_KEYSTORE
+    // secret). Relying on AGP's default ~/.android/debug.keystore was not
+    // enough: with the key written there, the APK still came out signed by
+    // another certificate. Same key => every new build installs as an update
+    // and keeps the grants given on the device.
+    def kitKeystore = System.getenv("KIT_DEBUG_KEYSTORE_PATH")
+
     signingConfigs {
-        kitDebug {
-            def kitKeystore = System.getenv("KIT_DEBUG_KEYSTORE_PATH")
+        kitKey {
             if (kitKeystore) {
                 storeFile file(kitKeystore)
                 storePassword "android"
@@ -37,22 +43,27 @@ android {
     }
 
     buildTypes {
+        // ClauDEX: the daily driver. Not debuggable, so ART compiles it with
+        // full optimization. Minify stays off on purpose: the freeform launch
+        // path depends on reflection (setLaunchWindowingMode, RestrictionBypass)
+        // that R8 could strip or rename.
         release {
+            applicationIdSuffix ".claudex"
+            manifestPlaceholders = [appLabel: "ClauDEX"]
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (kitKeystore) {
+                signingConfig signingConfigs.kitKey
+            }
         }
-        // kit-debug: side-by-side install next to the official release.
-        // A different applicationId means a different package, so this build
-        // never replaces (or conflicts with) the official APK, and it is
+        // ClauDEX debug: installs side by side with the release and is
         // debuggable, which unlocks run-as and heap dumps for profiling.
         debug {
             applicationIdSuffix ".debug"
             versionNameSuffix "-kit-debug"
-            // Explicit stable key when CI provides one. Relying on AGP's
-            // default ~/.android/debug.keystore was not enough: with the key
-            // written there, the APK still came out signed by another cert.
-            if (System.getenv("KIT_DEBUG_KEYSTORE_PATH")) {
-                signingConfig signingConfigs.kitDebug
+            manifestPlaceholders = [appLabel: "ClauDEX debug"]
+            if (kitKeystore) {
+                signingConfig signingConfigs.kitKey
             }
         }
     }
