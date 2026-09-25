@@ -12,22 +12,42 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # A stable debug key, so each new build installs as an UPDATE over the
+      # previous one and keeps the grants given on the device. Without the
+      # secret the runner makes a random key per run, and every build would
+      # need an uninstall. The key stays out of this public repo on purpose:
+      # whoever holds it can ship an update that inherits those grants.
+      - name: Stable debug signing key
+        env:
+          KIT_DEBUG_KEYSTORE: ${{ secrets.KIT_DEBUG_KEYSTORE }}
+        run: |
+          if [ -n "$KIT_DEBUG_KEYSTORE" ]; then
+            mkdir -p ~/.android
+            echo "$KIT_DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
+            echo "stable debug key installed"
+          else
+            echo "::warning::KIT_DEBUG_KEYSTORE secret not set - using a random debug key"
+          fi
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
-      - name: Checksums
-        run: sha256sum app/build/outputs/apk/debug/*.apk | tee app/build/outputs/apk/debug/SHA256SUMS
+      - name: Checksums and signing certificate
+        run: |
+          sha256sum app/build/outputs/apk/debug/*.apk | tee app/build/outputs/apk/debug/SHA256SUMS
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/*.apk | tee app/build/outputs/apk/debug/SIGNER.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -35,4 +55,5 @@ jobs:
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/debug/SHA256SUMS
+            app/build/outputs/apk/debug/SIGNER.txt
           retention-days: 30
