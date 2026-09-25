@@ -31,9 +31,12 @@ jobs:
           KIT_DEBUG_KEYSTORE: ${{ secrets.KIT_DEBUG_KEYSTORE }}
         run: |
           if [ -n "$KIT_DEBUG_KEYSTORE" ]; then
-            mkdir -p ~/.android
-            echo "$KIT_DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
-            echo "stable debug key installed"
+            KS="$RUNNER_TEMP/kit-debug.keystore"
+            printf '%s' "$KIT_DEBUG_KEYSTORE" | tr -d '\r\n ' | base64 -d > "$KS"
+            echo "KIT_DEBUG_KEYSTORE_PATH=$KS" >> "$GITHUB_ENV"
+            echo "stable debug key installed at $KS"
+            # the certificate fingerprint is public, printing it proves which key signs
+            keytool -list -v -keystore "$KS" -storepass android -alias androiddebugkey | grep -E 'SHA256:'
           else
             echo "::warning::KIT_DEBUG_KEYSTORE secret not set - using a random debug key"
           fi

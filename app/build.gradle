@@ -24,6 +24,18 @@ android {
         }
     }
 
+    signingConfigs {
+        kitDebug {
+            def kitKeystore = System.getenv("KIT_DEBUG_KEYSTORE_PATH")
+            if (kitKeystore) {
+                storeFile file(kitKeystore)
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -36,6 +48,12 @@ android {
         debug {
             applicationIdSuffix ".debug"
             versionNameSuffix "-kit-debug"
+            // Explicit stable key when CI provides one. Relying on AGP's
+            // default ~/.android/debug.keystore was not enough: with the key
+            // written there, the APK still came out signed by another cert.
+            if (System.getenv("KIT_DEBUG_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.kitDebug
+            }
         }
     }
 
