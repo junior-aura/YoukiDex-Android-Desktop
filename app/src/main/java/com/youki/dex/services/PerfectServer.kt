@@ -1917,7 +1917,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         if (launchMode == "smart") {
             if (displayId == Display.DEFAULT_DISPLAY) {
                 val plan = com.youki.dex.utils.WindowPlanner.plan(smartAvailableArea(), visibleAppWindows())
-                smartBounds = plan.bounds
+                smartBounds = plan.bounds?.let {
+                    com.youki.dex.utils.WindowPlanner.fitOrientation(
+                        it, lockedOrientation(packageName, intent), Utils.dpToPx(context, 220)
+                    )
+                }
                 if (smartBounds == null) launchMode = "standard"
             } else {
                 launchMode = "standard"
@@ -4367,6 +4371,26 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 if (taskId != null) AppUtils.resizeTaskTo(context, target, taskId)
             }.start()
         }, 900)
+    }
+
+    /** Orientation the launched activity locks in its manifest, if any. */
+    private fun lockedOrientation(pkg: String?, intent: Intent?): com.youki.dex.utils.WindowPlanner.Orientation {
+        val any = com.youki.dex.utils.WindowPlanner.Orientation.ANY
+        val launch = intent ?: pkg?.let { packageManager.getLaunchIntentForPackage(it) } ?: return any
+        val info = try { launch.resolveActivityInfo(packageManager, 0) } catch (e: Exception) { null } ?: return any
+        return when (info.screenOrientation) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT ->
+                com.youki.dex.utils.WindowPlanner.Orientation.PORTRAIT
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE ->
+                com.youki.dex.utils.WindowPlanner.Orientation.LANDSCAPE
+            else -> any
+        }
     }
 
     /**

@@ -79,5 +79,31 @@ object WindowPlanner {
         return best
     }
 
+    enum class Orientation { ANY, PORTRAIT, LANDSCAPE }
+
+    /**
+     * Fits a planned rectangle to an app that locks its orientation. The window
+     * manager does not honor a landscape rectangle for a portrait-only app: it
+     * swaps width and height (measured on a SM-A055M: Pokemon GO asked for
+     * 1510x665 got 665x1510, most of it below the screen). So the app gets the
+     * full side of [r] along its own axis, 9:16 across, never below [minSide]
+     * (the freeform floor: 220 dp, 412 px there), centered inside [r].
+     */
+    fun fitOrientation(r: Rect, orientation: Orientation, minSide: Int): Rect {
+        val portraitInLandscape = orientation == Orientation.PORTRAIT && r.width() > r.height()
+        val landscapeInPortrait = orientation == Orientation.LANDSCAPE && r.height() > r.width()
+        if (portraitInLandscape) {
+            val w = maxOf(r.height() * 9 / 16, minSide).coerceAtMost(r.width())
+            val left = r.centerX() - w / 2
+            return Rect(left, r.top, left + w, r.bottom)
+        }
+        if (landscapeInPortrait) {
+            val h = maxOf(r.width() * 9 / 16, minSide).coerceAtMost(r.height())
+            val top = r.centerY() - h / 2
+            return Rect(r.left, top, r.right, top + h)
+        }
+        return Rect(r)
+    }
+
     private fun size(r: Rect): Long = r.width().toLong() * r.height().toLong()
 }
