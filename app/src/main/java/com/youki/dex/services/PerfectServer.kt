@@ -287,6 +287,13 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         appMenu.scaleY = 1f; appMenu.translationY = 0f
     }
     private var isPinned = false
+    // ClauDEX on-demand dock: visible on an empty desktop, hidden while app
+    // windows are on screen, summoned ("peek") by swiping up on the bottom
+    // strip and dismissed by a tap outside it or by launching an app.
+    private var dockPeeking = false
+    private val onDemandHandler = Handler(Looper.getMainLooper())
+    private val onDemandEval = Runnable { evaluateOnDemandDock() }
+    private var handleDownY = -1f
     private var systemApp = false
     private var secondary = false
     private lateinit var dockLayoutParams: WindowManager.LayoutParams
@@ -458,6 +465,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dockLayout.setOnTouchListener(this)
         dockHandle.alpha = sharedPreferences.getString("handle_opacity", "0.5")?.toFloatOrNull() ?: 0.5f
         dockHandle.setOnClickListener { pinDock() }
+        if (isOnDemandDock()) setupOnDemandHandle()
 
         // Central animation function for all buttons
         // POLISH: ViewPropertyAnimator runs on the RenderThread → zero jank.
@@ -679,6 +687,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             if (isRoundOnStartup) displayWidthStartup - 2 * dockMargin else -1,
             dockHeight, context, secondary
         )
+        // ClauDEX: lets a tap anywhere else dismiss a summoned dock (ACTION_OUTSIDE)
+        if (isOnDemandDock())
+            dockLayoutParams.flags = dockLayoutParams.flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         dockLayoutParams.screenOrientation =
             if (sharedPreferences.getBoolean("lock_landscape", true))
                 ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -909,7 +920,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         launcherReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 when (intent.getStringExtra("action")) {
-                    LAUNCHER_RESUMED -> pinDock()
+                    LAUNCHER_RESUMED -> if (isOnDemandDock()) {
+                        dockPeeking = false
+                        scheduleOnDemandEval()
+                    } else pinDock()
                     ACTION_LAUNCH_APP -> {
                         val pkg = intent.getStringExtra("app") ?: return@onReceive
                         launchApp(intent.getStringExtra("mode"), pkg)
@@ -933,7 +947,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                         // visible bar inside the outer dock container). Without this, the
                         // outer HoverInterceptorLayout is VISIBLE but the inner bar stays GONE,
                         // so the dock appears invisible on desktop entry / service reconnect.
-                        pinDock()
+                        if (isOnDemandDock()) {
+                            showDock()
+                            scheduleOnDemandEval()
+                        } else pinDock()
                         sendBroadcast(Intent(DOCK_SERVICE_ACTION)
                             .setPackage(packageName)
                             .putExtra("action", ACTION_SHOW_NOTIFICATION_BAR))
@@ -1074,7 +1091,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         loadPinnedApps()
         placeRunningApps()
         safeAddView(dockHandle, handleLayoutParams)
-        if (sharedPreferences.getBoolean("pin_dock", true))
+        if (isOnDemandDock())
+            scheduleOnDemandEval(600)
+        else if (sharedPreferences.getBoolean("pin_dock", true))
             pinDock()
         else
             Toast.makeText(context, R.string.start_message, Toast.LENGTH_LONG).show()
@@ -1269,7 +1288,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 }
             }
             // auto-pin/unpin after direct launch only
-            if (getDefaultLaunchMode(app.packageName) == "fullscreen") {
+            if (isOnDemandDock()) {
+                dockLaunchedApp()
+            } else if (getDefaultLaunchMode(app.packageName) == "fullscreen") {
                 if (isPinned && sharedPreferences.getBoolean("auto_unpin", true)) unpinDock()
             } else {
                 if (!isPinned && sharedPreferences.getBoolean("auto_pin", true)) pinDock()
@@ -1304,7 +1325,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         } else {
             launchApp(getDefaultLaunchMode(app.packageName), app.packageName)
             // auto-pin/unpin after launch only
-            if (getDefaultLaunchMode(app.packageName) == "fullscreen") {
+            if (isOnDemandDock()) {
+                dockLaunchedApp()
+            } else if (getDefaultLaunchMode(app.packageName) == "fullscreen") {
                 if (isPinned && sharedPreferences.getBoolean("auto_unpin", true)) unpinDock()
             } else {
                 if (!isPinned && sharedPreferences.getBoolean("auto_pin", true)) pinDock()
@@ -1339,6 +1362,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            // ClauDEX: trailing evaluation, BEFORE the 600 ms gate below - that
+            // gate drops events, so the final window state could be missed.
+            if (isOnDemandDock()) scheduleOnDemandEval()
             val now = System.currentTimeMillis()
             // FIX: Samsung One UI 5.1 fires TYPE_WINDOWS_CHANGED hundreds of times per second.
             // Old code called freezeRotation() BEFORE the debounce check = massive battery drain.
@@ -1689,6 +1715,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     fun pinDock() {
+        dockPeeking = false
         isPinned = true
         pinBtn.setImageResource(R.drawable.ic_pin)
         if (dockLayout.isGone)
@@ -1705,8 +1732,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private fun unpinDock() {
         pinBtn.setImageResource(R.drawable.ic_unpin)
         isPinned = false
+        dockPeeking = false
         if (dockLayout.isVisible)
             hideDock(500)
+        // on-demand: an empty desktop brings the dock right back
+        if (isOnDemandDock()) scheduleOnDemandEval(800)
         // Android 16+: restore status bar
         if (Build.VERSION.SDK_INT >= 35) {
             val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
@@ -1991,7 +2021,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             DeviceUtils.freezeRotation(true)
         }
 
-        if (launchMode == "fullscreen" && sharedPreferences.getBoolean("auto_unpin", true)) {
+        if (isOnDemandDock()) {
+            dockLaunchedApp()
+        } else if (launchMode == "fullscreen" && sharedPreferences.getBoolean("auto_unpin", true)) {
             if (isPinned)
                 unpinDock()
         } else {
@@ -4183,11 +4215,127 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 0
             )
         }
+        if (isOnDemandDock()) styleOnDemandHandle()
     }
 
     private fun updateHandlePosition() {
         updateHandlePositionValues()
         safeUpdateViewLayout(dockHandle, handleLayoutParams)
+    }
+
+    // ── ClauDEX on-demand dock ───────────────────────────────────────────────
+
+    private fun isOnDemandDock() = sharedPreferences.getBoolean("dock_on_demand", true)
+
+    /** Re-evaluates dock visibility after the window list settles. Uses its own
+     *  Handler: showDock()/hideDock() clear dockHandler entirely. */
+    private fun scheduleOnDemandEval(delayMs: Long = 250) {
+        onDemandHandler.removeCallbacks(onDemandEval)
+        onDemandHandler.postDelayed(onDemandEval, delayMs)
+    }
+
+    /** Empty desktop -> dock visible; any app window on screen -> dock hidden.
+     *  A pinned dock (user's explicit choice) and a summoned one are left alone. */
+    private fun evaluateOnDemandDock() {
+        if (!isOnDemandDock() || isPinned || dockPeeking) return
+        if (!::dockLayout.isInitialized) return
+        if (visibleAppWindows().isEmpty()) {
+            if (dockLayout.isGone) showDock()
+        } else if (dockLayout.isVisible) {
+            hideDock(0)
+        }
+    }
+
+    private fun peekDock() {
+        dockPeeking = true
+        showDock()
+    }
+
+    /** Launching from the dock or the app menu: the dock has done its job. */
+    private fun dockLaunchedApp() {
+        dockPeeking = false
+        if (!isPinned) hideDock(0)
+        scheduleOnDemandEval(900)
+    }
+
+    private val homePackages: Set<String> by lazy {
+        packageManager.queryIntentActivities(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0
+        )
+            // FallbackHome (Settings, priority -1000) is not a launcher: keep
+            // Settings windows counted as apps.
+            .filter { it.priority >= 0 }
+            .mapNotNull { it.activityInfo?.packageName }
+            .toSet()
+    }
+
+    /**
+     * App windows on screen right now (freeform or fullscreen), in screen px,
+     * excluding this app, HOME/recents and system/IME windows. Also used by the
+     * "smart" launch mode to find free space.
+     */
+    fun visibleAppWindows(): List<android.graphics.Rect> {
+        val out = ArrayList<android.graphics.Rect>()
+        val list = try { windows } catch (e: Exception) { return out }
+        for (w in list) {
+            if (w.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            if (Build.VERSION.SDK_INT >= 30 && w.displayId != Display.DEFAULT_DISPLAY) continue
+            val pkg = try { w.root?.packageName?.toString() } catch (e: Exception) { null }
+            // unknown owner (e.g. a secure window): count it as an app window
+            if (pkg != null && (pkg == packageName || pkg in homePackages)) continue
+            val r = android.graphics.Rect()
+            w.getBoundsInScreen(r)
+            if (r.width() > 0 && r.height() > 0) out.add(r)
+        }
+        return out
+    }
+
+    /** The collapsed handle becomes a thin, faint pill centered on the dock
+     *  edge. Centered (not full width) on purpose: a full-width strip would
+     *  steal touches from the bottom of every app. */
+    private fun styleOnDemandHandle() {
+        val top = com.youki.dex.utils.DockPositionUtils.get(sharedPreferences) ==
+            com.youki.dex.utils.DockPositionUtils.Position.TOP
+        handleLayoutParams.width = (resources.displayMetrics.widthPixels * 0.4f).toInt()
+        handleLayoutParams.height = Utils.dpToPx(context, 14)
+        handleLayoutParams.gravity =
+            (if (top) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL
+        dockHandle.text = ""
+        dockHandle.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0)
+        dockHandle.minHeight = 0; dockHandle.minimumHeight = 0
+        dockHandle.minWidth = 0; dockHandle.minimumWidth = 0
+        dockHandle.setPadding(0)
+        val pill = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = Utils.dpToPx(context, 3).toFloat()
+            setColor(Color.WHITE)
+        }
+        val inset = Utils.dpToPx(context, 5)
+        dockHandle.background = android.graphics.drawable.InsetDrawable(pill, 0, inset, 0, inset)
+        dockHandle.alpha = 0.35f
+    }
+
+    /** Swipe from the dock edge (up for a bottom dock) summons the dock.
+     *  No plain tap, so a stray touch near the edge does nothing. */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupOnDemandHandle() {
+        dockHandle.setOnClickListener(null)
+        dockHandle.isClickable = false
+        dockHandle.setOnTouchListener { _, e ->
+            val top = com.youki.dex.utils.DockPositionUtils.get(sharedPreferences) ==
+                com.youki.dex.utils.DockPositionUtils.Position.TOP
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> handleDownY = e.rawY
+                MotionEvent.ACTION_MOVE -> if (handleDownY >= 0) {
+                    val travel = if (top) e.rawY - handleDownY else handleDownY - e.rawY
+                    if (travel > Utils.dpToPx(context, 16)) {
+                        handleDownY = -1f
+                        peekDock()
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> handleDownY = -1f
+            }
+            true
+        }
     }
 
     private fun toggleNotificationPanel(show: Boolean) {
@@ -4202,6 +4350,17 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     override fun onTouch(view: View, motionEvent: MotionEvent): Boolean {
+        // ClauDEX on-demand: a tap anywhere outside a summoned dock dismisses
+        // it, like the notification shade. Ignored while the app menu is open,
+        // since touching the menu is also "outside" the dock window.
+        if (motionEvent.action == MotionEvent.ACTION_OUTSIDE) {
+            if (dockPeeking && !appMenuVisible) {
+                dockPeeking = false
+                hideDock(0)
+                scheduleOnDemandEval(700)
+            }
+            return false
+        }
         // Close QS panel if open when dock is touched
         if (motionEvent.action == MotionEvent.ACTION_DOWN && qsPanelVisible) {
             toggleQsPanel()

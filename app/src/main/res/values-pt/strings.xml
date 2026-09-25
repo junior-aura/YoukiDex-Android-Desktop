@@ -839,4 +839,9 @@
     <string name="open_github_issue">Abrir Issue</string>
     <string name="log_copied_toast">Erro copiado para a área de transferência</string>
 
+    <!-- ClauDEX -->
+    <string name="dock_on_demand_title">Barra sob demanda</string>
+    <string name="dock_on_demand_summary">Aparece com a área de trabalho vazia e se esconde com apps abertos. Deslize para cima na borda inferior para chamá-la. Reinicie o DEX depois de mudar.</string>
+    <string name="launch_smart">Automático</string>
+
 </resources>

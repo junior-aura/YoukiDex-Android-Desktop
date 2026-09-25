@@ -116,6 +116,12 @@
 			android:summary="@string/dock_activation_area_summary"
 			android:title="@string/dock_activation_area_title"/>
 								
+		<SwitchPreferenceCompat
+			android:key="dock_on_demand"
+			android:defaultValue="true"
+			android:summary="@string/dock_on_demand_summary"
+			android:title="@string/dock_on_demand_title"/>
+
 		<Preference
 			android:key="auto_pin"
 			android:summary="@string/auto_pin_summary"

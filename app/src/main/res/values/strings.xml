@@ -1075,4 +1075,9 @@ To uninstall, remove Device Administrator permission first.</string>
     <string name="trackpad_status_no_display">No screen connected</string>
     <string name="trackpad_status_accessibility_needed">Enable YoukiDex\'s accessibility service first (Settings)</string>
 
+    <!-- ClauDEX -->
+    <string name="dock_on_demand_title">On-demand dock</string>
+    <string name="dock_on_demand_summary">Shown on an empty desktop, hidden while apps are open. Swipe up from the bottom edge to call it. Restart DEX after changing.</string>
+    <string name="launch_smart">Automatic</string>
+
 </resources>
