@@ -46,6 +46,13 @@ object AppUtils {
      */
     @Volatile var trulyRunningPackages: Set<String>? = null
 
+    /**
+     * ClauDEX "badge only" notifications (owner, 28/09): packages that have a
+     * notification worth a dot right now (ongoing ones - media, services -
+     * excluded). Filled by NotificationService, read by DockAppAdapter.
+     */
+    @Volatile var notifiedPackages: Set<String> = emptySet()
+
     /** Sorts [apps] by [App.name], case-sensitively. */
     private fun sortAppsByNameCaseSensitive(apps: List<App>): List<App> =
         apps.sortedBy { it.name }

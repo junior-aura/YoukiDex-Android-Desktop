@@ -374,6 +374,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // never reached disk, and every restart crashed again: no desktop.
         migrateRememberedLaunchModes()
         migrateSlimDock()
+        migrateSlimDockComposition()
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
         secondary = sharedPreferences.getBoolean("prefer_last_display", false)
         context = DeviceUtils.getDisplayContext(this, secondary)
@@ -564,10 +565,12 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 // so a user who disables "Notification panel" gets the
                 // panel itself gated closed, not just relying on the
                 // (different) button-visibility setting.
-                if (sharedPreferences.getBoolean("enable_qs_notif", true) &&
+                // ClauDEX "badge only" (owner, 28/09): the full notifications are
+                // the system shade's job; the own panel stays behind its pref
+                if (sharedPreferences.getBoolean("claudex_own_notif_panel", false) &&
                     sharedPreferences.getBoolean("enable_notif_panel", true)) {
                     toggleNotificationPanel(!Utils.notificationPanelVisible)
-                } else performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+                } else performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
             }
         }
         pinBtn.setOnClickListener { animateBtn(it) { togglePin() } }
@@ -1031,12 +1034,14 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             override fun onReceive(p1: Context, intent: Intent) {
                 when (intent.getStringExtra("action")) {
                     NOTIFICATION_COUNT_CHANGED -> {
-                        val count = intent.getIntExtra("count", 0)
-                        if (count > 0) {
-                            notificationBtn.text = count.toString()
-                        } else {
-                            notificationBtn.text = ""
-                        }
+                        // ClauDEX "badge only": a dot on the favorite that has news,
+                        // and a dot on the bell only for news from apps that are NOT
+                        // favorites (the favorite already shows its own)
+                        val pkgs = intent.getStringArrayListExtra("packages")?.toSet().orEmpty()
+                        AppUtils.notifiedPackages = pkgs
+                        val favorites = if (::pinnedApps.isInitialized) pinnedApps.map { it.packageName }.toSet() else emptySet()
+                        notificationBtn.text = if ((pkgs - favorites).isNotEmpty()) "●" else ""
+                        if (::tasksGv.isInitialized) (tasksGv.adapter as? DockAppAdapter)?.notifyDataSetChanged()
                     }
 
                     ACTION_TAKE_SCREENSHOT -> takeScreenshot()
@@ -3683,7 +3688,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             notificationBtn, bluetoothBtn, batteryBtn, wifiBtn,
             pinBtn, volumeBtn, wallpaperBtn, userBtn
         ).any { it.visibility == View.VISIBLE }
-        statusArea.visibility = if (qsAnyVisible) View.VISIBLE else View.GONE
+        // ClauDEX: the pill holds the Windows button and opens the quick panel,
+        // so it never hides (measured: with every status icon off it vanished
+        // and took the switcher with it)
+        statusArea.visibility = View.VISIBLE
+        if (!qsAnyVisible) com.youki.dex.utils.EventJournal.log(this, "dock: pill kept for the Windows button")
 
         // FIX 2: إخفاء system_tray كاملاً لما statusArea + dateTv كلهم GONE
         // هذا يحل مشكلة "النتفة" اللي تبقى في اليمين لما تطفي كل العناصر
@@ -4489,6 +4498,28 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             putBoolean(key, true)
         }
         com.youki.dex.utils.EventJournal.log(this, "migration: slim dock (height was ${h ?: "default"})")
+    }
+
+    /**
+     * One-time: the composition the owner picked for the slim dock (28/09) -
+     * [grid] [favorites] ... [Windows] Wi-Fi battery clock, plus the bell only as
+     * a dot for news from non-favorites. Bluetooth, volume and wallpaper leave
+     * the pill: they live in the quick panel. Runs before the listener exists.
+     */
+    private fun migrateSlimDockComposition() {
+        val key = "claudex_slim_dock_v2"
+        if (sharedPreferences.getBoolean(key, false)) return
+        sharedPreferences.edit {
+            putBoolean("enable_qs_wifi", true)
+            putBoolean("enable_qs_battery", true)
+            putBoolean("enable_qs_date", true)
+            putBoolean("enable_qs_notif", true)
+            putBoolean("enable_qs_bluetooth", false)
+            putBoolean("enable_qs_vol", false)
+            putBoolean("enable_qs_wallpaper", false)
+            putBoolean(key, true)
+        }
+        com.youki.dex.utils.EventJournal.log(this, "migration: slim dock composition")
     }
 
     // ── Snap on drop ─────────────────────────────────────────────────────
@@ -5759,6 +5790,7 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
     private fun doUpdateNotificationCount() {
         var count = 0
         var cancelableCount = 0
+        val notified = ArrayList<String>()
         val notifications = try {
             activeNotifications
         } catch (e: SecurityException) {
@@ -5770,6 +5802,9 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
             if (notification != null && notification.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0) {
                 count++
                 if (notification.isClearable) cancelableCount++
+                // ClauDEX badge: news, not the permanent ones (media, services)
+                if (!notification.isOngoing && notification.packageName !in notified)
+                    notified.add(notification.packageName)
             }
             if (Utils.notificationPanelVisible) cancelAllBtn?.visibility =
                 if (cancelableCount > 0) View.VISIBLE else View.INVISIBLE
@@ -5779,6 +5814,7 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
                 .setPackage(packageName)
                 .putExtra("action", NOTIFICATION_COUNT_CHANGED)
                 .putExtra("count", count)
+                .putStringArrayListExtra("packages", notified)
         )
     }
 

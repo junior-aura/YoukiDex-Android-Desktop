@@ -145,6 +145,13 @@ class DockAppAdapter(
         // still works correctly in AppAdapter.
         com.youki.dex.utils.IconScaleUtils.applyIconSize(viewHolder.iconIv, context, isDockIcon = true)
 
+        // ClauDEX "badge only" notifications: a dot when this app has news
+        // (only if the badge is not already showing a window count)
+        if (app.packageName in com.youki.dex.utils.AppUtils.notifiedPackages && viewHolder.taskCounter.alpha == 0f) {
+            viewHolder.taskCounter.text = "●"
+            viewHolder.taskCounter.alpha = 1f
+        }
+
         // Custom badge (a general number) — only shown if no windows are already showing on the same badge
         if (com.youki.dex.utils.IconScaleUtils.isCustomBadgeEnabled(context)) {
             val badgeText = com.youki.dex.utils.IconScaleUtils.getLocalizedBadgeDisplayText(context)
