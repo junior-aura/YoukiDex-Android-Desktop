@@ -419,9 +419,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         assistBtn = dock.findViewById(R.id.assist_btn)
         notificationBtn = dock.findViewById(R.id.notifications_btn)
         pinBtn   = dock.findViewById(R.id.pin_btn)
-        dock.findViewById<ImageView>(R.id.expand_btn)?.setOnClickListener {
-            animateBtn(it) { toggleExpandFocused() }
-        }
         wallpaperBtn = dock.findViewById(R.id.wallpaper_btn)
         userBtn = dock.findViewById(R.id.user_btn)
         castBtn = dock.findViewById(R.id.cast_btn)
@@ -561,6 +558,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             }
         }
         pinBtn.setOnClickListener { animateBtn(it) { togglePin() } }
+        dock.findViewById<ImageView>(R.id.expand_btn)?.setOnClickListener {
+            animateBtn(it) { toggleExpandFocused() }
+        }
 
         // ── Wallpaper button ──────────────────────────────────────────────────
         // Opens the app chosen by the user in settings
