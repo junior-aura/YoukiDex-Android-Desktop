@@ -59,8 +59,12 @@ class QuickPanel(
         view?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         view = null
         val bt = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-        profiles.forEach { (id, p) -> try { bt?.closeProfileProxy(id, p) } catch (e: Exception) {} }
+        // copy first: closing a proxy calls onServiceDisconnected, which removes
+        // from this same map - iterating it directly crashed with a
+        // ConcurrentModificationException (measured, SM-A055M)
+        val open = profiles.toMap()
         profiles.clear()
+        open.forEach { (id, p) -> try { bt?.closeProfileProxy(id, p) } catch (e: Exception) {} }
     }
 
     fun show() {
