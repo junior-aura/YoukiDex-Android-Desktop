@@ -846,5 +846,8 @@
     <string name="snap_needs_shizuku">Encaixar e expandir janelas precisa do Shizuku ativo</string>
     <string name="expand_window">Expandir ou restaurar a janela em foco</string>
     <string name="tile_windows">Organizar janelas abertas lado a lado</string>
+    <string name="switcher_title">Janelas abertas</string>
+    <string name="switcher_empty">Nenhuma janela aberta</string>
+    <string name="switcher_close">Fechar janela</string>
 
 </resources>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One open window in the ClauDEX switcher; rows are 48 dp for real fingers -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="52dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="6dp">
+
+    <ImageView
+        android:id="@+id/switcher_entry_icon"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:importantForAccessibility="no" />
+
+    <TextView
+        android:id="@+id/switcher_entry_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="#FFFFFFFF"
+        android:textSize="16sp" />
+
+    <ImageView
+        android:id="@+id/switcher_entry_close"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:contentDescription="@string/switcher_close"
+        android:padding="14dp"
+        android:src="@drawable/ic_close" />
+</LinearLayout>

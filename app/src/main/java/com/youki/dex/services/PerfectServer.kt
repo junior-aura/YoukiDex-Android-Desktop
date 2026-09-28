@@ -531,7 +531,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             performNavAction("enable_nav_home")
             true
         }
-        recentBtn.setOnClickListener { animateBtn(it) { performGlobalAction(GLOBAL_ACTION_RECENTS) } }
+        // ClauDEX: the dock's own switcher instead of the system one
+        recentBtn.setOnClickListener { animateBtn(it) { showSwitcher() } }
         recentBtn.setOnLongClickListener {
             performNavAction("enable_nav_recents")
             true
@@ -4511,10 +4512,14 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     private data class StackTask(val id: Int, val pkg: String, val bounds: android.graphics.Rect)
 
-    /** Visible app tasks from `am stack list` (needs Shizuku), home/own excluded. */
-    private fun stackTasks(shizuku: com.youki.dex.utils.ShizukoManager): List<StackTask> {
+    /**
+     * App tasks from `am stack list` (needs Shizuku), top first, home/own
+     * excluded; only visible ones unless [includeHidden].
+     */
+    private fun stackTasks(shizuku: com.youki.dex.utils.ShizukoManager, includeHidden: Boolean = false): List<StackTask> {
         val out = shizuku.runShellSync("am stack list") ?: return emptyList()
-        val re = Regex("""taskId=(\d+):.*bounds=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\].*visible=true.*topActivity=ComponentInfo\{([^/}]+)/""")
+        val vis = if (includeHidden) "" else "visible=true.*"
+        val re = Regex("""taskId=(\d+):.*bounds=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\].*""" + vis + """topActivity=ComponentInfo\{([^/}]+)/""")
         return out.lineSequence().mapNotNull { line ->
             val m = re.find(line) ?: return@mapNotNull null
             val g = m.groupValues
@@ -4551,6 +4556,73 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         )
         AppUtils.resizeTaskTo(context, fitted, task.id)
         com.youki.dex.utils.EventJournal.log(context, "snap: task ${task.id} ${task.pkg} -> ${fitted.toShortString()}")
+    }
+
+    // ── ClauDEX task switcher (dock's recents button) ─────────────────────
+    // The system switcher is served by One UI Home, which is not HOME here;
+    // measured on a SM-A055M with freeform windows it hit ANRs ("Input
+    // dispatching timed out, no focused window"), drew blank and removed a
+    // task nobody asked to close. This one lists the open windows itself.
+    private var switcherView: View? = null
+
+    private fun showSwitcher() {
+        switcherView?.let { closeSwitcher(); return }            // second tap closes
+        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+        if (!shizuku.hasPermission) {                            // cannot list other apps' tasks
+            performGlobalAction(GLOBAL_ACTION_RECENTS)
+            return
+        }
+        Thread {
+            val entries = stackTasks(shizuku, includeHidden = true).distinctBy { it.id }.map {
+                com.youki.dex.adapters.SwitcherEntry(
+                    it.id, it.pkg, AppUtils.getPackageLabel(context, it.pkg), AppUtils.getAppIcon(context, it.pkg)
+                )
+            }
+            launchHandler.post { openSwitcher(entries.toMutableList()) }
+        }.start()
+    }
+
+    private fun openSwitcher(entries: MutableList<com.youki.dex.adapters.SwitcherEntry>) {
+        val view = LayoutInflater.from(context).inflate(R.layout.claudex_switcher, null)
+        ColorUtils.applyMainColor(context, sharedPreferences, view)
+        val params = makeContextMenuParams()
+        params.gravity = Gravity.CENTER
+        val lv = view.findViewById<ListView>(R.id.switcher_lv)
+        val empty = view.findViewById<View>(R.id.switcher_empty)
+        // a long list scrolls instead of running off the screen
+        if (entries.size > 6) lv.layoutParams = lv.layoutParams.apply { height = Utils.dpToPx(context, 52 * 6) }
+        lateinit var adapter: com.youki.dex.adapters.SwitcherAdapter
+        adapter = com.youki.dex.adapters.SwitcherAdapter(context, entries) { e ->
+            adapter.remove(e)
+            if (adapter.count == 0) empty.visibility = View.VISIBLE
+            Thread {
+                com.youki.dex.utils.ShizukoManager.getInstance(context).runShellSync("am stack remove ${e.taskId}")
+                com.youki.dex.utils.EventJournal.log(context, "switcher: closed task ${e.taskId} ${e.pkg}")
+            }.start()
+        }
+        lv.adapter = adapter
+        if (entries.isEmpty()) empty.visibility = View.VISIBLE
+        lv.setOnItemClickListener { _, _, position, _ ->
+            val e = adapter.getItem(position) ?: return@setOnItemClickListener
+            closeSwitcher()
+            // keeps the freeform bounds, unlike relaunching the app
+            try { activityManager.moveTaskToFront(e.taskId, 0) } catch (ex: Exception) {}
+            com.youki.dex.utils.EventJournal.log(context, "switcher: front task ${e.taskId} ${e.pkg}")
+        }
+        view.findViewById<View>(R.id.switcher_tile).setOnClickListener { closeSwitcher(); tileWindows() }
+        view.findViewById<View>(R.id.switcher_expand).setOnClickListener { closeSwitcher(); toggleExpandFocused() }
+        view.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) closeSwitcher()
+            false
+        }
+        addPopup(view, params)
+        switcherView = view
+        com.youki.dex.utils.EventJournal.log(context, "switcher: ${entries.size} windows")
+    }
+
+    private fun closeSwitcher() {
+        switcherView?.let { removePopup(it) }
+        switcherView = null
     }
 
     // ── Side by side (dock button) ─────────────────────────────────────────
