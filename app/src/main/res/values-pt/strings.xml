@@ -843,5 +843,7 @@
     <string name="dock_on_demand_title">Barra sob demanda</string>
     <string name="dock_on_demand_summary">Aparece com a área de trabalho vazia e se esconde com apps abertos. Deslize para cima na borda inferior para chamá-la. Reinicie o DEX depois de mudar.</string>
     <string name="launch_smart">Automático</string>
+    <string name="snap_needs_shizuku">Encaixar e expandir janelas precisa do Shizuku ativo</string>
+    <string name="expand_window">Expandir ou restaurar a janela em foco</string>
 
 </resources>

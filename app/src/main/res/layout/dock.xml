@@ -65,6 +65,17 @@
                 android:clickable="true"
                 android:focusable="true">
 
+                <!-- ClauDEX: expand / restore the focused window -->
+                <ImageView
+                    android:id="@+id/expand_btn"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_margin="3dp"
+                    android:background="@null"
+                    android:contentDescription="@string/expand_window"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_maximized" />
+
                 <!-- FIX: pin_btn merged inside status_area pill -->
                 <ImageView
                     android:id="@+id/pin_btn"

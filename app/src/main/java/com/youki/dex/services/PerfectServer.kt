@@ -419,6 +419,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         assistBtn = dock.findViewById(R.id.assist_btn)
         notificationBtn = dock.findViewById(R.id.notifications_btn)
         pinBtn   = dock.findViewById(R.id.pin_btn)
+        dock.findViewById<ImageView>(R.id.expand_btn)?.setOnClickListener {
+            animateBtn(it) { toggleExpandFocused() }
+        }
         wallpaperBtn = dock.findViewById(R.id.wallpaper_btn)
         userBtn = dock.findViewById(R.id.user_btn)
         castBtn = dock.findViewById(R.id.cast_btn)
@@ -4408,26 +4411,167 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         com.youki.dex.utils.EventJournal.log(this, "migration: forgot $n remembered 'standard' launch modes")
     }
 
-    // Feasibility spy for snap-on-drop: does accessibility report a window
-    // while the user drags it by the system caption, and where does it stop?
-    private var lastSpyTime = 0L
-    private var lastSpySnapshot = ""
-    private val spyDrop = Runnable {
-        com.youki.dex.utils.EventJournal.log(context, "drop ${spySnapshot()}")
-    }
-
-    private fun spySnapshot() = visibleAppWindows().joinToString(",") { it.toShortString() }
+    // ── Snap on drop ─────────────────────────────────────────────────────
+    // The user drags a window by the system's own caption; accessibility
+    // reports its bounds while it moves (measured on a SM-A055M, including
+    // positions off-screen). A drag = a window that keeps its size and changes
+    // position; its extremes decide the zone once it has been still for
+    // SNAP_QUIET_MS (events of one drag came up to ~450 ms apart).
+    private val SNAP_QUIET_MS = 700L
+    private var lastSnapSample = 0L
+    private var lastWindows: List<android.graphics.Rect> = emptyList()
+    private var dragWindow: android.graphics.Rect? = null
+    private var dragExtremes: android.graphics.Rect? = null
+    private var dragOthers: List<android.graphics.Rect> = emptyList()
+    // our own resizes move windows too - ignore bounds changes until then
+    @Volatile private var snapQuietUntil = 0L
+    private var warnedNoShizuku = false
+    private val snapDrop = Runnable { onDragDropped() }
 
     private fun spyBounds() {
-        launchHandler.removeCallbacks(spyDrop)
-        launchHandler.postDelayed(spyDrop, 300)
+        launchHandler.removeCallbacks(snapDrop)
+        launchHandler.postDelayed(snapDrop, SNAP_QUIET_MS)
         val now = System.currentTimeMillis()
-        if (now - lastSpyTime < 100) return
-        lastSpyTime = now
-        val snap = spySnapshot()
-        if (snap == lastSpySnapshot) return
-        lastSpySnapshot = snap
-        com.youki.dex.utils.EventJournal.log(context, "bounds $snap")
+        if (now < snapQuietUntil || now - lastSnapSample < 50) return
+        lastSnapSample = now
+        val current = visibleAppWindows()
+        val moving = dragWindow
+        if (moving == null) {
+            // a rect that is new, with the size of one that is gone = moved
+            val gone = lastWindows.filter { it !in current }
+            val moved = current.filter { it !in lastWindows }
+                .firstOrNull { m -> gone.any { it.width() == m.width() && it.height() == m.height() } }
+            if (moved != null) {
+                val from = gone.first { it.width() == moved.width() && it.height() == moved.height() }
+                dragWindow = moved
+                dragExtremes = android.graphics.Rect(from).apply { union(moved) }
+                dragOthers = lastWindows.filter { it != from }
+            }
+        } else {
+            val same = current.filter { it.width() == moving.width() && it.height() == moving.height() }
+                .minByOrNull { Math.abs(it.centerX() - moving.centerX()) + Math.abs(it.centerY() - moving.centerY()) }
+            // near a corner the window can vanish from the list: keep the extremes
+            if (same != null) {
+                dragWindow = same
+                dragExtremes?.union(same)
+            }
+        }
+        lastWindows = current
+    }
+
+    private fun onDragDropped() {
+        val window = dragWindow
+        val extremes = dragExtremes
+        val others = dragOthers
+        dragWindow = null; dragExtremes = null; dragOthers = emptyList()
+        lastWindows = visibleAppWindows()
+        if (window == null || extremes == null) return
+        val dm = resources.displayMetrics
+        val screen = android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels)
+        val area = smartAvailableArea()
+        val zone = com.youki.dex.utils.WindowSnapper.zoneFor(extremes, screen, area, Utils.dpToPx(context, 24))
+        com.youki.dex.utils.EventJournal.log(context, "drag window=${window.toShortString()} extremes=${extremes.toShortString()} zone=$zone")
+        if (zone == com.youki.dex.utils.WindowSnapper.Zone.NONE) return
+        val target = com.youki.dex.utils.WindowSnapper.boundsFor(zone, area) ?: return
+        val complement = com.youki.dex.utils.WindowSnapper.complementFor(zone, area)
+        val neighbour = complement?.let { c ->
+            others.filter { com.youki.dex.utils.WindowSnapper.occupies(it, target) }
+                .maxByOrNull { it.width().toLong() * it.height() }?.let { it to c }
+        }
+        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+        if (!shizuku.hasPermission) {
+            com.youki.dex.utils.EventJournal.log(context, "snap: no Shizuku")
+            if (!warnedNoShizuku) {
+                warnedNoShizuku = true
+                Toast.makeText(this, R.string.snap_needs_shizuku, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        snapQuietUntil = System.currentTimeMillis() + 2500
+        Thread {
+            val tasks = stackTasks(shizuku)
+            val dragged = tasks.minByOrNull { sizeDistance(it.bounds, window) } ?: return@Thread
+            // the system may have claimed this drop (One UI: top/bottom edge ->
+            // split screen); then the task is no longer freeform - leave it
+            if (!isFreeformTask(shizuku, dragged.id)) {
+                com.youki.dex.utils.EventJournal.log(context, "snap: task ${dragged.id} not freeform, system handled it")
+                return@Thread
+            }
+            snapTaskTo(dragged, target)
+            if (neighbour != null) {
+                val (rect, dest) = neighbour
+                tasks.filter { it.id != dragged.id }.minByOrNull { sizeDistance(it.bounds, rect) }
+                    ?.let { snapTaskTo(it, dest) }
+            }
+            snapQuietUntil = System.currentTimeMillis() + 1500
+        }.start()
+    }
+
+    private data class StackTask(val id: Int, val pkg: String, val bounds: android.graphics.Rect)
+
+    /** Visible app tasks from `am stack list` (needs Shizuku), home/own excluded. */
+    private fun stackTasks(shizuku: com.youki.dex.utils.ShizukoManager): List<StackTask> {
+        val out = shizuku.runShellSync("am stack list") ?: return emptyList()
+        val re = Regex("""taskId=(\d+):.*bounds=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\].*visible=true.*topActivity=ComponentInfo\{([^/}]+)/""")
+        return out.lineSequence().mapNotNull { line ->
+            val m = re.find(line) ?: return@mapNotNull null
+            val g = m.groupValues
+            val pkg = g[6]
+            if (pkg == packageName || pkg in homePackages) return@mapNotNull null
+            StackTask(g[1].toInt(), pkg, android.graphics.Rect(g[2].toInt(), g[3].toInt(), g[4].toInt(), g[5].toInt()))
+        }.toList()
+    }
+
+    private fun isFreeformTask(shizuku: com.youki.dex.utils.ShizukoManager, id: Int): Boolean {
+        val out = shizuku.runShellSync("dumpsys activity activities | grep 'Task{'") ?: return false
+        val line = out.lineSequence().firstOrNull { it.contains(" #$id ") } ?: return false
+        return line.contains("mode=freeform")
+    }
+
+    /** Accessibility may clip a window at the screen edge: compare sizes, then position. */
+    private fun sizeDistance(a: android.graphics.Rect, b: android.graphics.Rect): Int =
+        Math.abs(a.width() - b.width()) * 4 + Math.abs(a.height() - b.height()) * 4 +
+            Math.abs(a.left - b.left) + Math.abs(a.top - b.top)
+
+    private fun snapTaskTo(task: StackTask, target: android.graphics.Rect) {
+        val fitted = com.youki.dex.utils.WindowPlanner.fitOrientation(
+            target, lockedOrientation(task.pkg, null), Utils.dpToPx(context, 220)
+        )
+        AppUtils.resizeTaskTo(context, fitted, task.id)
+        com.youki.dex.utils.EventJournal.log(context, "snap: task ${task.id} ${task.pkg} -> ${fitted.toShortString()}")
+    }
+
+    // ── Expand / restore the focused window (dock button) ─────────────────
+    private val restoreBounds = HashMap<Int, android.graphics.Rect>()
+
+    private fun toggleExpandFocused() {
+        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+        if (!shizuku.hasPermission) {
+            Toast.makeText(this, R.string.snap_needs_shizuku, Toast.LENGTH_LONG).show()
+            return
+        }
+        val area = smartAvailableArea()
+        val focused = AppUtils.currentApp
+        snapQuietUntil = System.currentTimeMillis() + 2500
+        Thread {
+            val tasks = stackTasks(shizuku)
+            val task = tasks.firstOrNull { it.pkg == focused } ?: tasks.firstOrNull() ?: return@Thread
+            val expanded = com.youki.dex.utils.WindowPlanner.fitOrientation(
+                area, lockedOrientation(task.pkg, null), Utils.dpToPx(context, 220)
+            )
+            val isExpanded = Math.abs(task.bounds.left - expanded.left) <= 4 &&
+                Math.abs(task.bounds.right - expanded.right) <= 4 &&
+                Math.abs(task.bounds.top - expanded.top) <= 12
+            val dest = if (isExpanded) {
+                restoreBounds.remove(task.id) ?: com.youki.dex.utils.AppUtils.makeLaunchBounds(context, "standard", dockHeight, Display.DEFAULT_DISPLAY)
+            } else {
+                restoreBounds[task.id] = android.graphics.Rect(task.bounds)
+                expanded
+            }
+            AppUtils.resizeTaskTo(context, dest, task.id)
+            com.youki.dex.utils.EventJournal.log(context, "expand: task ${task.id} ${task.pkg} ${if (isExpanded) "restore" else "expand"} -> ${dest.toShortString()}")
+            snapQuietUntil = System.currentTimeMillis() + 1500
+        }.start()
     }
 
     /**

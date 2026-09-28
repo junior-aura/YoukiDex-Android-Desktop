@@ -356,7 +356,7 @@ object AppUtils {
      * bar heights, scale factor preference) and computes the launch
      * bounds rect for the given windowing [mode].
      */
-    private fun makeLaunchBounds(
+    fun makeLaunchBounds(
         context: Context, mode: String, dockHeight: Int, displayId: Int = Display.DEFAULT_DISPLAY
     ): Rect {
         val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
