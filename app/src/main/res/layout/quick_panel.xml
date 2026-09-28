@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ClauDEX quick panel: levels and connections without the notification shade.
+     Touch targets are 48 dp or larger. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="340dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/round_rect"
+    android:elevation="16dp"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_brightness" />
+
+        <SeekBar
+            android:id="@+id/qp_brightness"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:contentDescription="@string/qp_brightness"
+            android:max="255" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_volume" />
+
+        <SeekBar
+            android:id="@+id/qp_volume"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:contentDescription="@string/qp_volume" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/qp_wifi"
+            style="@style/QuickPanelToggle"
+            android:drawableTop="@drawable/ic_wifi_on"
+            android:text="@string/qp_wifi" />
+
+        <TextView
+            android:id="@+id/qp_data"
+            style="@style/QuickPanelToggle"
+            android:drawableTop="@drawable/ic_mobile_data"
+            android:text="@string/qp_data" />
+
+        <TextView
+            android:id="@+id/qp_bluetooth"
+            style="@style/QuickPanelToggle"
+            android:drawableTop="@drawable/ic_bluetooth"
+            android:text="@string/qp_bluetooth" />
+
+        <TextView
+            android:id="@+id/qp_notifications"
+            style="@style/QuickPanelToggle"
+            android:drawableTop="@drawable/ic_notifications"
+            android:text="@string/qp_notifications" />
+    </LinearLayout>
+
+    <!-- paired Bluetooth devices, filled at runtime -->
+    <LinearLayout
+        android:id="@+id/qp_devices"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="vertical" />
+</LinearLayout>

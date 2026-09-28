@@ -296,6 +296,12 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     // and hideDock() clear every dockHandler message, and the on-demand dock
     // hides on each launch - which silently cancelled these checks.
     private val launchHandler = Handler(Looper.getMainLooper())
+    // ClauDEX quick panel (panels/QuickPanel.kt), opened from the status area
+    private val quickPanel by lazy {
+        com.youki.dex.panels.QuickPanel(context, windowManager, sharedPreferences) {
+            performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+        }
+    }
     private val onDemandEval = Runnable { evaluateOnDemandDock() }
     private var handleDownY = -1f
     private var systemApp = false
@@ -361,11 +367,16 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         db = DBHelper.getInstance(this)
         activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
+        // ClauDEX: one-time migrations BEFORE the change listener exists.
+        // Measured on a SM-A055M: writing dock prefs with the listener already
+        // registered ran updateQuickSettings() before the dock views were
+        // inflated (lateinit notificationBtn) - crash in onCreate, the flag
+        // never reached disk, and every restart crashed again: no desktop.
+        migrateRememberedLaunchModes()
+        migrateSlimDock()
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
         secondary = sharedPreferences.getBoolean("prefer_last_display", false)
         context = DeviceUtils.getDisplayContext(this, secondary)
-        migrateRememberedLaunchModes()
-        migrateSlimDock()
         windowManager = context.getSystemService(WINDOW_SERVICE) as WindowManager
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
@@ -671,7 +682,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 val hitBt  = isTouchOnView(bluetoothBtn, event)
                 val hitWifi = isTouchOnView(wifiBtn, event)
                 if (!hitBt && !hitWifi) {
-                    toggleNotificationPanel(true)
+                    // ClauDEX: the quick panel (levels + connections); the
+                    // full notifications stay with the system shade
+                    quickPanel.toggle()
                 }
             }
             false // لا نستهلك الحدث عشان BT/WiFi يستلموا click اللي عندهم
@@ -3644,6 +3657,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     private fun updateQuickSettings() {
+        // a pref write before the dock is inflated must not crash onCreate
+        if (!::notificationBtn.isInitialized) return
         notificationBtn.visibility =
             if (sharedPreferences.getBoolean("enable_qs_notif", true)) View.VISIBLE else View.GONE
         bluetoothBtn.visibility =
@@ -5009,6 +5024,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         serviceScope.cancel() // Cancel all running coroutines to prevent leaks
         launchHandler.removeCallbacksAndMessages(null)
         onDemandHandler.removeCallbacksAndMessages(null)
+        try { quickPanel.dismiss() } catch (e: Exception) {}
         castManager?.destroy()
         DeviceUtils.hideStatusBar(this, false)
         // Previously broken (stuck in landscape until Force Stop): freezeRotation(true) is

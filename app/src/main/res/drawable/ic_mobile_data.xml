@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- ClauDEX: mobile data (signal bars) -->
+  <path
+      android:fillColor="#FFFFFF"
+      android:pathData="M3,18H6V21H3V18M8,14H11V21H8V14M13,9H16V21H13V9M18,4H21V21H18V4Z"/>
+</vector>

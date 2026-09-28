@@ -849,5 +849,14 @@
     <string name="switcher_title">Janelas abertas</string>
     <string name="switcher_empty">Nenhuma janela aberta</string>
     <string name="switcher_close">Fechar janela</string>
+    <string name="qp_brightness">Brilho</string>
+    <string name="qp_volume">Volume de mídia</string>
+    <string name="qp_wifi">Wi-Fi</string>
+    <string name="qp_data">Dados móveis</string>
+    <string name="qp_bluetooth">Bluetooth</string>
+    <string name="qp_notifications">Notificações</string>
+    <string name="qp_connected">conectado</string>
+    <string name="qp_connecting">conectando…</string>
+    <string name="qp_needs_shizuku">Precisa do Shizuku ativo</string>
 
 </resources>
