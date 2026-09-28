@@ -79,7 +79,7 @@
             android:key="enable_qs_pin"
             android:title="@string/enable_qs_pin_title"
             android:summary="@string/enable_qs_pin_summary"
-            android:defaultValue="true" />
+            android:defaultValue="false" />
 
     </PreferenceCategory>
     <PreferenceCategory
@@ -184,7 +184,7 @@
 
     <PreferenceCategory android:title="@string/appearance">
         <com.youki.dex.preferences.SliderPreference
-            android:defaultValue="48"
+            android:defaultValue="44"
             android:key="dock_height"
             android:title="@string/dock_height" />
 

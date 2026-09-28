@@ -891,7 +891,7 @@ object AppUtils {
         "small" -> DockSizeConfig(40, 34, 42, false)
         "pc"    -> DockSizeConfig(30, 24, 32, true)   // Display Size
         else    -> DockSizeConfig(
-            prefs.getString("dock_height", "56")!!.toInt(),
+            prefs.getString("dock_height", "44")!!.toInt(),
             50, 52, false
         )
     }

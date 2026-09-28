@@ -365,6 +365,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         secondary = sharedPreferences.getBoolean("prefer_last_display", false)
         context = DeviceUtils.getDisplayContext(this, secondary)
         migrateRememberedLaunchModes()
+        migrateSlimDock()
         windowManager = context.getSystemService(WINDOW_SERVICE) as WindowManager
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
@@ -559,14 +560,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             }
         }
         pinBtn.setOnClickListener { animateBtn(it) { togglePin() } }
-        dock.findViewById<ImageView>(R.id.expand_btn)?.setOnClickListener {
-            animateBtn(it) { toggleExpandFocused() }
-        }
         dock.findViewById<ImageView>(R.id.switcher_btn)?.setOnClickListener {
             animateBtn(it) { showSwitcher() }
-        }
-        dock.findViewById<ImageView>(R.id.tile_btn)?.setOnClickListener {
-            animateBtn(it) { tileWindows() }
         }
 
         // ── Wallpaper button ──────────────────────────────────────────────────
@@ -688,7 +683,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dateTv.isClickable = false
 
         dockHeight =
-            Utils.dpToPx(context, sharedPreferences.getString("dock_height", "56")?.toIntOrNull() ?: 56)
+            Utils.dpToPx(context, sharedPreferences.getString("dock_height", "44")?.toIntOrNull() ?: 44)
         val isRoundOnStartup = sharedPreferences.getBoolean("round_dock", false)
 
         val displayIdStartup = if (secondary)
@@ -1351,6 +1346,34 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 if (!isPinned && sharedPreferences.getBoolean("auto_pin", true)) pinDock()
             }
         }
+    }
+
+    /**
+     * Icon dragged up = fullscreen (owner, 28/09) - true fullscreen may rotate
+     * for an orientation-locked app, which the owner accepted. An app that is
+     * already open in a window is brought to front and expanded instead:
+     * turning an existing freeform task fullscreen needs the hidden
+     * setTaskWindowingMode (am task set-windowing-mode is absent on One UI).
+     */
+    override fun onDockAppSwipedUp(app: DockApp, view: View) {
+        val open = app.tasks.firstOrNull { it.id != -1 }
+        com.youki.dex.utils.EventJournal.log(context, "dock: swipe-up ${app.packageName} open=${open?.id}")
+        if (open == null) {
+            launchApp("fullscreen", app.packageName, rememberMode = false)
+        } else {
+            try { activityManager.moveTaskToFront(open.id, 0) } catch (e: Exception) {}
+            val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+            if (shizuku.hasPermission) {
+                val area = smartAvailableArea()
+                Thread {
+                    val target = com.youki.dex.utils.WindowPlanner.fitOrientation(
+                        area, lockedOrientation(app.packageName, null), Utils.dpToPx(context, 220)
+                    )
+                    AppUtils.resizeTaskTo(context, target, open.id)
+                }.start()
+            }
+        }
+        if (isOnDemandDock()) dockLaunchedApp()
     }
 
     override fun onDockAppLongClicked(app: DockApp, view: View) {
@@ -3133,7 +3156,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     /** Computes dockLayoutParams.height from the dock_height preference — does NOT call updateViewLayout(); see onConfigurationChanged. */
     private fun recomputeDockHeight() {
-        dockHeight = Utils.dpToPx(context, sharedPreferences.getString("dock_height", "56")?.toIntOrNull() ?: 56)
+        dockHeight = Utils.dpToPx(context, sharedPreferences.getString("dock_height", "44")?.toIntOrNull() ?: 44)
         // GUARD: onConfigurationChanged can fire before onServiceConnected has
         // finished initializing dockLayoutParams (e.g. overlay permission not
         // yet granted, or a config change racing startup). Bail out safely
@@ -3358,9 +3381,31 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     else apps.add(DockApp(task))
                 }
             } else {
+                // ClauDEX: favorites only (owner, 28/09). The dock used to fill
+                // itself with the 24 h usage history after the pinned apps, so
+                // its icons changed on their own; open windows live in the
+                // switcher. Running tasks only mark their favorite as open.
+                val favoritesOnly = sharedPreferences.getBoolean("dock_favorites_only", true)
+                if (favoritesOnly && apps.isEmpty() &&
+                    !sharedPreferences.getBoolean("claudex_dock_seeded_v1", false)
+                ) {
+                    // first run with no favorites: seed them with what the dock
+                    // showed until now, so it does not open empty
+                    fetchedTasks.distinctBy { it.packageName }.take(8).forEach {
+                        AppUtils.pinApp(context, it, AppUtils.DOCK_PINNED_LIST)
+                        apps.add(DockApp(it.name, it.packageName, it.icon))
+                    }
+                    sharedPreferences.edit { putBoolean("claudex_dock_seeded_v1", true) }
+                    withContext(Dispatchers.Main) {
+                        pinnedApps = AppUtils.getPinnedApps(context, AppUtils.DOCK_PINNED_LIST)
+                    }
+                    com.youki.dex.utils.EventJournal.log(context, "dock: seeded ${apps.size} favorites")
+                }
                 fetchedTasks.reversed().forEach { task ->
-                    if (AppUtils.containsTask(apps, task) == -1)
-                        apps.add(DockApp(task))
+                    val index = AppUtils.containsTask(apps, task)
+                    if (index != -1) {
+                        if (task.id != -1) apps[index].addTask(task)
+                    } else if (!favoritesOnly) apps.add(DockApp(task))
                 }
             }
 
@@ -3608,13 +3653,13 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         wifiBtn.visibility =
             if (sharedPreferences.getBoolean("enable_qs_wifi", true)) View.VISIBLE else View.GONE
         pinBtn.visibility =
-            if (sharedPreferences.getBoolean("enable_qs_pin", true)) View.VISIBLE else View.GONE
+            if (sharedPreferences.getBoolean("enable_qs_pin", false)) View.VISIBLE else View.GONE
         volumeBtn.visibility =
             if (sharedPreferences.getBoolean("enable_qs_vol", true)) View.VISIBLE else View.GONE
         wallpaperBtn.visibility =
             if (sharedPreferences.getBoolean("enable_qs_wallpaper", false)) View.VISIBLE else View.GONE
         userBtn.visibility =
-            if (sharedPreferences.getBoolean("enable_qs_user", true)) View.VISIBLE else View.GONE
+            if (sharedPreferences.getBoolean("enable_qs_user", false)) View.VISIBLE else View.GONE
         dateTv.visibility =
             if (sharedPreferences.getBoolean("enable_qs_date", true)) View.VISIBLE else View.GONE
 
@@ -4409,6 +4454,26 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         val n = db.clearLaunchModes("standard")
         sharedPreferences.edit().putBoolean(key, true).apply()
         com.youki.dex.utils.EventJournal.log(this, "migration: forgot $n remembered 'standard' launch modes")
+    }
+
+    /**
+     * One-time "less is more" dock (owner, 28/09): 44 dp instead of the old
+     * default (the code said 56, the settings screen said 48 - a height still
+     * at either is taken as never chosen), and the profile button (it only
+     * opened the power menu - never used) and the pin button off. A height
+     * the owner picked by hand is kept.
+     */
+    private fun migrateSlimDock() {
+        val key = "claudex_slim_dock_v1"
+        if (sharedPreferences.getBoolean(key, false)) return
+        val h = sharedPreferences.getString("dock_height", null)
+        sharedPreferences.edit {
+            if (h == null || h == "56" || h == "48") putString("dock_height", "44")
+            putBoolean("enable_qs_user", false)
+            putBoolean("enable_qs_pin", false)
+            putBoolean(key, true)
+        }
+        com.youki.dex.utils.EventJournal.log(this, "migration: slim dock (height was ${h ?: "default"})")
     }
 
     // ── Snap on drop ─────────────────────────────────────────────────────
@@ -5331,7 +5396,7 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         margins = Utils.dpToPx(context, 2)
         dockHeight =
-            Utils.dpToPx(context, sharedPreferences.getString("dock_height", "56")!!.toInt())
+            Utils.dpToPx(context, sharedPreferences.getString("dock_height", "44")!!.toInt())
         // FIX: when round_dock=true the dock floats 8dp above the screen bottom edge.
         // The notification layout must clear this gap or it renders behind the floating dock.
         val dockFloatMargin = if (sharedPreferences.getBoolean("round_dock", false))
@@ -6841,7 +6906,7 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
 
     private fun updateLayoutParams() {
         dockHeight =
-            Utils.dpToPx(context, sharedPreferences.getString("dock_height", "56")!!.toInt())
+            Utils.dpToPx(context, sharedPreferences.getString("dock_height", "44")!!.toInt())
         // FIX: floating dock adds 8dp gap — panels must clear this gap too
         val dockFloatMargin = if (sharedPreferences.getBoolean("round_dock", false))
             Utils.dpToPx(context, 8) else 0

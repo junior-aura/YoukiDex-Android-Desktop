@@ -610,7 +610,7 @@ open class LauncherActivity : BaseFontScaleActivity(), SharedPreferences.OnShare
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun applyDockPadding() {
-        val dockHeightDp = prefs.getString("dock_height", "56")?.toIntOrNull() ?: 56
+        val dockHeightDp = prefs.getString("dock_height", "44")?.toIntOrNull() ?: 44
         val dockHeightPx = (dockHeightDp * resources.displayMetrics.density + 0.5f).toInt()
         desktopContainer.setPadding(desktopContainer.paddingLeft, desktopContainer.paddingTop, desktopContainer.paddingRight, dockHeightPx)
     }

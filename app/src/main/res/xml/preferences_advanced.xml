@@ -24,7 +24,7 @@
         android:title="@string/custom_toasts" />
 
     <com.youki.dex.preferences.SliderPreference
-        android:defaultValue="48"
+        android:defaultValue="44"
         android:key="dock_height"
         android:title="@string/dock_height" />
 

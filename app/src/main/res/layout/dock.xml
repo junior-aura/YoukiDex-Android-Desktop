@@ -76,27 +76,8 @@
                     android:padding="6dp"
                     android:src="@drawable/ic_recents" />
 
-                <!-- ClauDEX: arrange the open windows side by side -->
-                <ImageView
-                    android:id="@+id/tile_btn"
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_margin="3dp"
-                    android:background="@null"
-                    android:contentDescription="@string/tile_windows"
-                    android:padding="5dp"
-                    android:src="@drawable/ic_tile_windows" />
-
-                <!-- ClauDEX: expand / restore the focused window -->
-                <ImageView
-                    android:id="@+id/expand_btn"
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_margin="3dp"
-                    android:background="@null"
-                    android:contentDescription="@string/expand_window"
-                    android:padding="5dp"
-                    android:src="@drawable/ic_maximized" />
+                <!-- ClauDEX: side-by-side and expand live inside the switcher
+                     ("less is more", owner 28/09) - no loose buttons here -->
 
                 <!-- FIX: pin_btn merged inside status_area pill -->
                 <ImageView

@@ -33,6 +33,8 @@ class DockAppAdapter(
     interface OnDockAppClickListener {
         fun onDockAppClicked(app: DockApp, view: View)
         fun onDockAppLongClicked(app: DockApp, view: View)
+        /** ClauDEX: icon dragged upwards = open in fullscreen (owner, 28/09). */
+        fun onDockAppSwipedUp(app: DockApp, view: View) {}
     }
 
     init {
@@ -224,10 +226,26 @@ class DockAppAdapter(
                 }
             } else {
                 itemView.setOnClickListener { view -> listener.onDockAppClicked(app, view) }
+                // ClauDEX: tap = default mode, drag the icon up = fullscreen
+                val swipePx = 24 * itemView.resources.displayMetrics.density
+                var downX = 0f
+                var downY = 0f
                 itemView.setOnTouchListener { view, event ->
                     if (event.buttonState == MotionEvent.BUTTON_SECONDARY) {
                         listener.onDockAppLongClicked(app, view)
                         return@setOnTouchListener true
+                    }
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY }
+                        MotionEvent.ACTION_UP -> {
+                            val up = downY - event.rawY
+                            if (up > swipePx && up > 1.5f * Math.abs(event.rawX - downX)) {
+                                view.cancelLongPress()
+                                view.isPressed = false
+                                listener.onDockAppSwipedUp(app, view)
+                                return@setOnTouchListener true   // consumed: no tap
+                            }
+                        }
                     }
                     false
                 }
