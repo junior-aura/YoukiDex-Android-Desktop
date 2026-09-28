@@ -10,7 +10,9 @@ import android.graphics.Rect
  * released (dragged to top 21 -> settled at 82), so the final position does
  * not say which edge the user pushed into. Edges the system itself claims
  * (on One UI, top and bottom turn the window into split screen) never reach
- * here - the caller checks that the task is still freeform.
+ * here - the caller checks that the task is still freeform. On One UI that
+ * is every edge (sides "stash" the window into the edge), so there this only
+ * logs; it acts where the system leaves edges free (AOSP-like tablets).
  *
  *   side only          -> half of that side
  *   top only           -> EXPANDED (the whole area)

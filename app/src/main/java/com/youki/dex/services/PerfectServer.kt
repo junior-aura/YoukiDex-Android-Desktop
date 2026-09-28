@@ -4500,7 +4500,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // the system may have claimed this drop (One UI: top/bottom edge ->
             // split screen); then the task is no longer freeform - leave it
             if (!isFreeformTask(shizuku, dragged.id)) {
-                com.youki.dex.utils.EventJournal.log(context, "snap: task ${dragged.id} not freeform, system handled it")
+                com.youki.dex.utils.EventJournal.log(context, "snap: task ${dragged.id} split or stashed, system handled it")
                 return@Thread
             }
             snapTaskTo(dragged, target)
@@ -4528,10 +4528,20 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         }.toList()
     }
 
+    /**
+     * Still an ordinary freeform window, i.e. the system did not act on the
+     * drop itself. On One UI every edge is claimed: top/bottom turn the task
+     * into split screen (mode changes), and the sides "stash" it - tucked into
+     * the edge, drawn scaled (mFreeformStashMode=2, stash scale 0.92 measured
+     * on a SM-A055M). Resizing a stashed task left it drawn at ~64%.
+     */
     private fun isFreeformTask(shizuku: com.youki.dex.utils.ShizukoManager, id: Int): Boolean {
-        val out = shizuku.runShellSync("dumpsys activity activities | grep 'Task{'") ?: return false
-        val line = out.lineSequence().firstOrNull { it.contains(" #$id ") } ?: return false
-        return line.contains("mode=freeform")
+        val out = shizuku.runShellSync("dumpsys activity activities | grep -A20 'Task{.* #$id '") ?: return false
+        val lines = out.lineSequence().toList()
+        if (lines.firstOrNull()?.contains("mode=freeform") != true) return false
+        val stash = lines.take(20).firstOrNull { it.contains("mFreeformStashMode=") }
+            ?.substringAfter("mFreeformStashMode=")?.trim()?.takeWhile { it.isDigit() }
+        return stash == null || stash == "0"
     }
 
     /** Accessibility may clip a window at the screen edge: compare sizes, then position. */
