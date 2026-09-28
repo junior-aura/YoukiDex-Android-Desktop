@@ -1088,11 +1088,12 @@ To uninstall, remove Device Administrator permission first.</string>
     <string name="qp_brightness">Brightness</string>
     <string name="qp_volume">Media volume</string>
     <string name="qp_wifi">Wi-Fi</string>
-    <string name="qp_data">Mobile data</string>
+    <string name="qp_data">Data</string>
     <string name="qp_bluetooth">Bluetooth</string>
-    <string name="qp_notifications">Notifications</string>
+    <string name="qp_notifications">Alerts</string>
     <string name="qp_connected">connected</string>
     <string name="qp_connecting">connecting…</string>
+    <string name="qp_not_connected">not connected</string>
     <string name="qp_needs_shizuku">Needs Shizuku running</string>
 
 </resources>

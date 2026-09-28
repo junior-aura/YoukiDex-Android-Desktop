@@ -235,7 +235,16 @@ class QuickPanel(
             }
         }
         EventJournal.log(context, "quickpanel: connect ${d.address} -> $why")
-        if (!ok) openActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        if (!ok) { openActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)); return }
+        // measured on a SM-A055M: connect() is accepted and the A2DP stack
+        // really tries (CONNECTING -> DISCONNECTED when the device is off or
+        // out of range) - so say how it ended instead of "connecting..." forever
+        main.postDelayed({
+            if (!isShowing) return@postDelayed
+            val done = isConnected(d)
+            row.text = "${label(d)}  ·  ${context.getString(if (done) R.string.qp_connected else R.string.qp_not_connected)}"
+            EventJournal.log(context, "quickpanel: connect ${d.address} ended connected=$done")
+        }, 6000)
     }
 
     private fun openActivity(intent: Intent) {

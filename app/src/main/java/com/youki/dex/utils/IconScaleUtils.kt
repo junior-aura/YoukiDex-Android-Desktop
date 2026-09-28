@@ -56,7 +56,14 @@ object IconScaleUtils {
 
     /** Applies the scaled icon size (in pixels) to a dock/grid icon's ImageView. */
     fun applyIconSize(imageView: ImageView, context: Context, isDockIcon: Boolean) {
-        val baseDp = if (isDockIcon) BASE_DOCK_ICON_DP else BASE_GRID_ICON_DP
+        // ClauDEX: a dock icon follows the dock's height (height - 10 dp), not a
+        // fixed 44 dp - on the 44 dp slim dock a 44 dp icon filled it edge to
+        // edge and the row ran under the status pill (measured, SM-A055M)
+        val baseDp = if (isDockIcon) {
+            val dockDp = PreferenceManager.getDefaultSharedPreferences(context)
+                .getString("dock_height", "44")?.toIntOrNull() ?: 44
+            minOf(BASE_DOCK_ICON_DP, dockDp - 10).coerceAtLeast(24)
+        } else BASE_GRID_ICON_DP
         val scale = getIconScalePercent(context) / 100f
         val sizePx = Utils.dpToPx(context, (baseDp * scale).toInt())
         val lp = imageView.layoutParams
