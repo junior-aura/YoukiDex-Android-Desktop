@@ -2104,35 +2104,28 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     ) {
         val delayMs = if (attempt == 1) 400L else 800L
         launchHandler.postDelayed({
-            val runningTasks = activityManager.getRunningTasks(1)
-            val taskId = runningTasks.firstOrNull()
-                ?.takeIf { it.topActivity?.packageName == packageName }
-                ?.id ?: -1
-            when {
-                taskId != -1 -> if (bounds != null)
-                    AppUtils.resizeTaskTo(context, bounds, taskId)
-                else
-                    AppUtils.resizeTask(context, launchMode, taskId, dockHeight)
-                attempt == 1 -> checkTaskCreatedOrRetry(packageName, launchMode, attempt = 2, bounds = bounds)
-                else -> {
-                    // Both checks failed — this is the "app completely
-                    // fails to open" half of the user report, distinct from
-                    // launchApp's own startActivity try/catch (that one
-                    // catches startActivity() itself throwing; this catches
-                    // it returning normally but the system never actually
-                    // finishing Task creation, e.g. the new process getting
-                    // OOM-killed a moment later on a 3GB-RAM device).
-                    // Nothing to resize, and silently doing nothing here is
-                    // exactly the "app just didn't open, with no
-                    // explanation" behavior being reported — so tell the
-                    // user plainly instead.
-                    Toast.makeText(
-                        this@DockService,
-                        getString(R.string.something_wrong),
-                        Toast.LENGTH_SHORT
-                    ).show()
+            // ClauDEX: getRunningTasks() only returns this app's own tasks, so
+            // the upstream check never found the launched app and, once it
+            // stopped being cancelled by hideDock (063cc76), flashed "Something
+            // went wrong" on every cold start of a window that opened fine
+            // (owner report, SM-A055M). Tasks are read with am stack list over
+            // Shizuku; without it this cannot see other apps, so it stays quiet.
+            val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+            if (!shizuku.hasPermission) return@postDelayed
+            Thread {
+                val task = stackTasks(shizuku).firstOrNull { it.pkg == packageName }
+                when {
+                    // smart launches are corrected by fitToClampedTop already
+                    task != null -> if (bounds == null)
+                        AppUtils.resizeTask(context, launchMode, task.id, dockHeight)
+                    attempt == 1 -> launchHandler.post {
+                        checkTaskCreatedOrRetry(packageName, launchMode, attempt = 2, bounds = bounds)
+                    }
+                    // a real failure (e.g. the process OOM-killed): journal, no
+                    // toast - a false toast is worse than none
+                    else -> com.youki.dex.utils.EventJournal.log(context, "launch check: no task for $packageName")
                 }
-            }
+            }.start()
         }, delayMs)
     }
 
