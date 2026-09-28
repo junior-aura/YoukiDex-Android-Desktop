@@ -65,6 +65,17 @@
                 android:clickable="true"
                 android:focusable="true">
 
+                <!-- ClauDEX: the task switcher, always here (the nav buttons can be hidden) -->
+                <ImageView
+                    android:id="@+id/switcher_btn"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_margin="3dp"
+                    android:background="@null"
+                    android:contentDescription="@string/switcher_title"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_recents" />
+
                 <!-- ClauDEX: arrange the open windows side by side -->
                 <ImageView
                     android:id="@+id/tile_btn"

@@ -562,6 +562,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dock.findViewById<ImageView>(R.id.expand_btn)?.setOnClickListener {
             animateBtn(it) { toggleExpandFocused() }
         }
+        dock.findViewById<ImageView>(R.id.switcher_btn)?.setOnClickListener {
+            animateBtn(it) { showSwitcher() }
+        }
         dock.findViewById<ImageView>(R.id.tile_btn)?.setOnClickListener {
             animateBtn(it) { tileWindows() }
         }
