@@ -127,6 +127,12 @@ class ShizukoManager private constructor(private val context: Context) {
                 // resizeableActivity=false get pushed back to fullscreen even
                 // inside a freeform task.
                 add("settings put global development_force_resizable_activities 1")
+                // ClauDEX: the key the window manager actually reads is
+                // Settings.Global.DEVELOPMENT_FORCE_RESIZABLE_ACTIVITIES =
+                // "force_resizable_activities". Measured on a SM-A055M: both keys
+                // exist, and after a reboot only this one was back to 0 - so the
+                // line above alone never restored it on the next bind.
+                add("settings put global force_resizable_activities 1")
                 // Android 15 (API 35): Desktop Windowing Mode. Without these,
                 // freeform windows on API 35 render without the system caption bar.
                 if (sdkInt == 35) {
@@ -194,6 +200,7 @@ class ShizukoManager private constructor(private val context: Context) {
         _permissionGranted = try {
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (e: Exception) { false }
+        EventJournal.log(context, "shizuku bound permission=$_permissionGranted")
 
         internalScope.launch(Dispatchers.Main) {
             boundListeners.values.forEach { it() }
@@ -208,6 +215,7 @@ class ShizukoManager private constructor(private val context: Context) {
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         _binderAlive = false
         _permissionGranted = false
+        EventJournal.log(context, "shizuku binder dead")
         internalScope.launch(Dispatchers.Main) {
             unboundListeners.values.forEach { it() }
             onUnbound?.invoke()

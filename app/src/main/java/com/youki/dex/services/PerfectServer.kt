@@ -924,10 +924,13 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         launcherReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 when (intent.getStringExtra("action")) {
-                    LAUNCHER_RESUMED -> if (isOnDemandDock()) {
-                        dockPeeking = false
-                        scheduleOnDemandEval()
-                    } else pinDock()
+                    LAUNCHER_RESUMED -> {
+                        journalState("desktop")
+                        if (isOnDemandDock()) {
+                            dockPeeking = false
+                            scheduleOnDemandEval()
+                        } else pinDock()
+                    }
                     ACTION_LAUNCH_APP -> {
                         val pkg = intent.getStringExtra("app") ?: return@onReceive
                         launchApp(intent.getStringExtra("mode"), pkg)
@@ -1369,6 +1372,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // ClauDEX: trailing evaluation, BEFORE the 600 ms gate below - that
             // gate drops events, so the final window state could be missed.
             if (isOnDemandDock()) scheduleOnDemandEval()
+            if (Build.VERSION.SDK_INT >= 28 &&
+                (event.windowChanges and AccessibilityEvent.WINDOWS_CHANGE_BOUNDS) != 0
+            ) spyBounds()
             val now = System.currentTimeMillis()
             // FIX: Samsung One UI 5.1 fires TYPE_WINDOWS_CHANGED hundreds of times per second.
             // Old code called freezeRotation() BEFORE the debounce check = massive battery drain.
@@ -1400,6 +1406,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             ) {
                 if (AppUtils.currentApp != pkg) {
                     AppUtils.currentApp = pkg
+                    journalState("focus $pkg")
                     // أعد رسم الـ dock ليظهر الخط العريض تحت التطبيق النشط الجديد
                     // GUARD: AccessibilityService can fire events before onServiceConnected
                     // finishes inflating the dock view (findViewById for tasksGv happens
@@ -2025,7 +2032,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 return
             }
 
-            android.util.Log.i("ClauDEX", "launch $packageName mode=$launchMode smart=$smartBounds")
+            com.youki.dex.utils.EventJournal.log(context, "launch $packageName mode=$launchMode smart=$smartBounds")
             if (smartBounds != null && packageName != null)
                 fitToClampedTop(packageName, smartBounds)
 
@@ -3382,6 +3389,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (newConfig.orientation != orientation) journalState("config orientation=${newConfig.orientation}")
         orientation = newConfig.orientation
         // GUARD: this can fire before onServiceConnected finishes setting up
         // the dock (overlay permission not granted yet, or a config change
@@ -4351,7 +4359,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // [0,55][1510,720] for a real [0,55][1510,730]), so the signature is
             // same left/right edges and a lower top; the height is not comparable
             val actual = shiftedWindow(planned)
-            android.util.Log.i("ClauDEX", "fit $pkg planned=$planned actual=$actual floor=${freeformMinTop()}")
+            com.youki.dex.utils.EventJournal.log(context, "fit $pkg planned=$planned actual=$actual floor=${freeformMinTop()}")
             if (actual == null) return@postDelayed
             if (actual.top > freeformMinTop())
                 sharedPreferences.edit().putInt(freeformMinTopKey(), actual.top).apply()
@@ -4361,16 +4369,63 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             Thread {
                 val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
                 if (!shizuku.hasPermission) {
-                    android.util.Log.i("ClauDEX", "fit: no Shizuku, floor learned only")
+                    com.youki.dex.utils.EventJournal.log(context, "fit: no Shizuku, floor learned only")
                     return@Thread
                 }
                 val taskId = shizuku.runShellSync("am stack list")?.lineSequence()
                     ?.firstOrNull { it.contains("visible=true") && it.contains("topActivity=ComponentInfo{$pkg/") }
                     ?.substringAfter("taskId=")?.substringBefore(":")?.trim()?.toIntOrNull()
-                android.util.Log.i("ClauDEX", "fit: task=$taskId -> $target")
+                com.youki.dex.utils.EventJournal.log(context, "fit: task=$taskId -> $target")
                 if (taskId != null) AppUtils.resizeTaskTo(context, target, taskId)
             }.start()
         }, 900)
+    }
+
+    // Feasibility spy for snap-on-drop: does accessibility report a window
+    // while the user drags it by the system caption, and where does it stop?
+    private var lastSpyTime = 0L
+    private var lastSpySnapshot = ""
+    private val spyDrop = Runnable {
+        com.youki.dex.utils.EventJournal.log(context, "drop ${spySnapshot()}")
+    }
+
+    private fun spySnapshot() = visibleAppWindows().joinToString(",") { it.toShortString() }
+
+    private fun spyBounds() {
+        launchHandler.removeCallbacks(spyDrop)
+        launchHandler.postDelayed(spyDrop, 300)
+        val now = System.currentTimeMillis()
+        if (now - lastSpyTime < 100) return
+        lastSpyTime = now
+        val snap = spySnapshot()
+        if (snap == lastSpySnapshot) return
+        lastSpySnapshot = snap
+        com.youki.dex.utils.EventJournal.log(context, "bounds $snap")
+    }
+
+    /**
+     * One journal line with the state that explains a mode glitch: what
+     * happened, display orientation and size, dock state, Shizuku, and every
+     * app window on screen. Called on focus change, return to the desktop and
+     * orientation change only - not per frame.
+     */
+    private fun journalState(what: String) {
+        val dm = resources.displayMetrics
+        val dock = when {
+            !::dockLayout.isInitialized -> "?"
+            isPinned -> "pinned"
+            dockPeeking -> "peek"
+            dockLayout.isVisible -> "shown"
+            else -> "hidden"
+        }
+        val shizuku = try {
+            if (com.youki.dex.utils.ShizukoManager.getInstance(context).hasPermission) "ok" else "off"
+        } catch (e: Exception) { "?" }
+        com.youki.dex.utils.EventJournal.log(
+            context,
+            "$what | orient=${resources.configuration.orientation} ${dm.widthPixels}x${dm.heightPixels}" +
+                " dock=$dock shizuku=$shizuku windows=${visibleAppWindows().joinToString(",") { it.toShortString() }}"
+        )
     }
 
     /** Orientation the launched activity locks in its manifest, if any. */
