@@ -4440,15 +4440,16 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // a rect that is new, with the size of one that is gone = moved
             val gone = lastWindows.filter { it !in current }
             val moved = current.filter { it !in lastWindows }
-                .firstOrNull { m -> gone.any { it.width() == m.width() && it.height() == m.height() } }
+                .firstOrNull { m -> gone.any { sameSize(it, m) } }
             if (moved != null) {
-                val from = gone.first { it.width() == moved.width() && it.height() == moved.height() }
+                val from = gone.first { sameSize(it, moved) }
                 dragWindow = moved
                 dragExtremes = android.graphics.Rect(from).apply { union(moved) }
                 dragOthers = lastWindows.filter { it != from }
+                com.youki.dex.utils.EventJournal.log(context, "drag start ${from.toShortString()} -> ${moved.toShortString()}")
             }
         } else {
-            val same = current.filter { it.width() == moving.width() && it.height() == moving.height() }
+            val same = current.filter { sameSize(it, moving) }
                 .minByOrNull { Math.abs(it.centerX() - moving.centerX()) + Math.abs(it.centerY() - moving.centerY()) }
             // near a corner the window can vanish from the list: keep the extremes
             if (same != null) {
@@ -4458,6 +4459,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         }
         lastWindows = current
     }
+
+    /** Accessibility rounds window sizes (a 600x450 task came as 599x449). */
+    private fun sameSize(a: android.graphics.Rect, b: android.graphics.Rect) =
+        Math.abs(a.width() - b.width()) <= 6 && Math.abs(a.height() - b.height()) <= 6
 
     private fun onDragDropped() {
         val window = dragWindow
