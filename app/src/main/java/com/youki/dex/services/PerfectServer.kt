@@ -4444,7 +4444,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             if (moved != null) {
                 val from = gone.first { sameSize(it, moved) }
                 dragWindow = moved
-                dragExtremes = android.graphics.Rect(from).apply { union(moved) }
+                dragExtremes = android.graphics.Rect(from.centerX(), from.top, from.centerX(), from.top).apply { union(moved.centerX(), moved.top) }
                 dragOthers = lastWindows.filter { it != from }
                 com.youki.dex.utils.EventJournal.log(context, "drag start ${from.toShortString()} -> ${moved.toShortString()}")
             }
@@ -4454,7 +4454,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // near a corner the window can vanish from the list: keep the extremes
             if (same != null) {
                 dragWindow = same
-                dragExtremes?.union(same)
+                dragExtremes?.union(same.centerX(), same.top)
             }
         }
         lastWindows = current
@@ -4474,11 +4474,12 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         val dm = resources.displayMetrics
         val screen = android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels)
         val area = smartAvailableArea()
-        val zone = com.youki.dex.utils.WindowSnapper.zoneFor(extremes, screen, area, Utils.dpToPx(context, 24))
-        com.youki.dex.utils.EventJournal.log(context, "drag window=${window.toShortString()} extremes=${extremes.toShortString()} zone=$zone")
+        val zone = com.youki.dex.utils.WindowSnapper.zoneFor(extremes, screen, area, Utils.dpToPx(context, 64), Utils.dpToPx(context, 24))
+        com.youki.dex.utils.EventJournal.log(context, "drag window=${window.toShortString()} finger=${extremes.toShortString()} zone=$zone")
         if (zone == com.youki.dex.utils.WindowSnapper.Zone.NONE) return
-        val target = com.youki.dex.utils.WindowSnapper.boundsFor(zone, area) ?: return
-        val complement = com.youki.dex.utils.WindowSnapper.complementFor(zone, area)
+        val minSide = Utils.dpToPx(context, 220)
+        val target = com.youki.dex.utils.WindowSnapper.boundsFor(zone, area, minSide) ?: return
+        val complement = com.youki.dex.utils.WindowSnapper.complementFor(zone, area, minSide)
         val neighbour = complement?.let { c ->
             others.filter { com.youki.dex.utils.WindowSnapper.occupies(it, target) }
                 .maxByOrNull { it.width().toLong() * it.height() }?.let { it to c }
