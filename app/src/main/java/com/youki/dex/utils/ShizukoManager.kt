@@ -207,9 +207,31 @@ class ShizukoManager private constructor(private val context: Context) {
             onBound?.invoke()
             when {
                 _permissionGranted -> internalScope.launch { grantAll() }
-                else -> try { Shizuku.requestPermission(REQUEST_CODE) } catch (e: Exception) {}
+                // ClauDEX: only the build in use asks unprompted. Every app with
+                // a ShizukuProvider is woken on each Shizuku start, so an
+                // installed-but-idle second build (the debug one kept for
+                // measurements) would pop a permission dialog after every reboot.
+                isActiveBuild() -> try { Shizuku.requestPermission(REQUEST_CODE) } catch (e: Exception) {}
             }
         }
+    }
+
+    /** This package is the HOME app or has its accessibility service enabled. */
+    private fun isActiveBuild(): Boolean {
+        val pkg = context.packageName
+        val a11y = try {
+            android.provider.Settings.Secure.getString(
+                context.contentResolver, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ).orEmpty()
+        } catch (e: Exception) { "" }
+        if (a11y.split(':').any { it.startsWith("$pkg/") }) return true
+        val home = try {
+            context.packageManager.resolveActivity(
+                android.content.Intent(android.content.Intent.ACTION_MAIN)
+                    .addCategory(android.content.Intent.CATEGORY_HOME), 0
+            )?.activityInfo?.packageName
+        } catch (e: Exception) { null }
+        return home == pkg
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {

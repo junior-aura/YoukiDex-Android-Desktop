@@ -364,6 +364,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
         secondary = sharedPreferences.getBoolean("prefer_last_display", false)
         context = DeviceUtils.getDisplayContext(this, secondary)
+        migrateRememberedLaunchModes()
         windowManager = context.getSystemService(WINDOW_SERVICE) as WindowManager
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
@@ -4322,15 +4323,24 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     fun visibleAppWindows(): List<android.graphics.Rect> {
         val out = ArrayList<android.graphics.Rect>()
         val list = try { windows } catch (e: Exception) { return out }
+        val dm = resources.displayMetrics
+        val screen = android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels)
         for (w in list) {
             if (w.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
             if (Build.VERSION.SDK_INT >= 30 && w.displayId != Display.DEFAULT_DISPLAY) continue
             val pkg = try { w.root?.packageName?.toString() } catch (e: Exception) { null }
             // unknown owner (e.g. a secure window): count it as an app window
             if (pkg != null && (pkg == packageName || pkg in homePackages)) continue
+            // ClauDEX: the freeform caption pill Samsung draws above each window
+            // is a separate application-type window owned by SystemUI (178x47
+            // on a SM-A055M) - it is chrome, not an app
+            if (pkg == "com.android.systemui") continue
             val r = android.graphics.Rect()
             w.getBoundsInScreen(r)
-            if (r.width() > 0 && r.height() > 0) out.add(r)
+            // right after a rotation the list can still carry the previous
+            // orientation's bounds (seen: [0,1041][720,1510] on a 1600x720
+            // screen) - a window that misses the screen is not on it
+            if (r.width() > 0 && r.height() > 0 && android.graphics.Rect.intersects(r, screen)) out.add(r)
         }
         return out
     }
@@ -4379,6 +4389,23 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 if (taskId != null) AppUtils.resizeTaskTo(context, target, taskId)
             }.start()
         }, 900)
+    }
+
+    /**
+     * One-time: forget every app remembered as "standard". launchApp saves the
+     * mode each launch used and a remembered mode wins over the default, so
+     * whatever an app first opened with stuck for good - every app opened
+     * before "smart" existed was frozen at the old "standard" default
+     * (measured: Calendar launched mode=standard on an empty desktop).
+     * Modes only an explicit choice produces (maximized/portrait/fullscreen)
+     * are kept.
+     */
+    private fun migrateRememberedLaunchModes() {
+        val key = "claudex_launch_modes_migrated_v1"
+        if (sharedPreferences.getBoolean(key, false)) return
+        val n = db.clearLaunchModes("standard")
+        sharedPreferences.edit().putBoolean(key, true).apply()
+        com.youki.dex.utils.EventJournal.log(this, "migration: forgot $n remembered 'standard' launch modes")
     }
 
     // Feasibility spy for snap-on-drop: does accessibility report a window

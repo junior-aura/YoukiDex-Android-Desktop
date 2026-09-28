@@ -78,4 +78,12 @@ class DBHelper private constructor(context: Context) :
                 }
         } catch (e: Exception) { null }
     }
+
+    /** Deletes every remembered launch mode equal to [mode]; returns how many. */
+    fun clearLaunchModes(mode: String): Int = try {
+        writableDatabase.delete(
+            LaunchModesTable.TABLE_NAME,
+            "${LaunchModesTable.COLUMN_LAUNCH_MODE} = ?", arrayOf(mode)
+        )
+    } catch (e: Exception) { 0 }
 }
