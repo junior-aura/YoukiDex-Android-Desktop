@@ -27,7 +27,16 @@ class BootReceiver : BroadcastReceiver() {
 
         // If accessibility service is already enabled, Android restarts it automatically.
         // Our SecurityException fix (DockService.kt:673) ensures it won't crash on boot.
-        if (DeviceUtils.isAccessibilityServiceEnabled(context)) return
+        // ClauDEX: "configured", not "bound" - at BOOT_COMPLETED the service is
+        // usually not bound yet. And only the build in use nags: an idle second
+        // build (HOME elsewhere, service off) stays quiet.
+        if (DeviceUtils.isAccessibilityServiceConfigured(context)) return
+        val home = try {
+            context.packageManager.resolveActivity(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0
+            )?.activityInfo?.packageName
+        } catch (e: Exception) { null }
+        if (home != context.packageName) return
 
         // Service not enabled — remind the user to turn it on
         showReEnableNotification(context)

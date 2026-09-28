@@ -99,7 +99,10 @@ open class LauncherActivity : BaseFontScaleActivity(), SharedPreferences.OnShare
         // attempted opportunistically, but never blocks the desktop's own
         // UI from being built — setContentView() and the rest of onCreate()
         // always run regardless of accessibility state.
-        if (!com.youki.dex.utils.DeviceUtils.isAccessibilityServiceEnabled(this)) {
+        // ClauDEX: "configured", not "bound" - right after boot the service is
+        // switched on but not bound yet, and asking then sent the user to
+        // Accessibility settings for nothing.
+        if (!com.youki.dex.utils.DeviceUtils.isAccessibilityServiceConfigured(this)) {
             if (com.youki.dex.utils.DeviceUtils.hasWriteSettingsPermission(this)) {
                 // Enable the DockService accessibility service directly — no need
                 // to route through Android Settings. enableService() now sets both
@@ -112,7 +115,7 @@ open class LauncherActivity : BaseFontScaleActivity(), SharedPreferences.OnShare
                 // fails (e.g. a ROM that clears the setting on write).
                 com.youki.dex.utils.DeviceUtils.enableService(this)
                 android.os.Handler(mainLooper).postDelayed({
-                    if (!com.youki.dex.utils.DeviceUtils.isAccessibilityServiceEnabled(this)) {
+                    if (!com.youki.dex.utils.DeviceUtils.isAccessibilityServiceConfigured(this)) {
                         routeToAccessibilitySettings()
                     }
                 }, 800)

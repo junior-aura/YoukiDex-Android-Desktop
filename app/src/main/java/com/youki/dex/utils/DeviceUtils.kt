@@ -712,6 +712,22 @@ object DeviceUtils {
         return false
     }
 
+    /**
+     * ClauDEX: the service is switched on in Settings, bound or not.
+     * isAccessibilityServiceEnabled() reads the BOUND list, which is empty for
+     * a few seconds after boot - HOME starts first. Measured on a SM-A055M:
+     * right after a reboot the desktop took that as "disabled" and sent the
+     * user to Accessibility settings (START from the app's own uid, 1 s before
+     * the service bound). Use this one to decide whether to ask.
+     */
+    fun isAccessibilityServiceConfigured(context: Context): Boolean {
+        val enabled = getSecureSetting(context, "accessibility_enabled", "0") == "1"
+        val list = getSecureSetting(context, ENABLED_ACCESSIBILITY_SERVICES, "")
+        val ours = android.content.ComponentName.unflattenFromString(serviceName(context))
+        // the setting may hold the full or the short (pkg/.Class) form
+        return enabled && list.split(':').any { android.content.ComponentName.unflattenFromString(it) == ours }
+    }
+
     fun hasStoragePermission(context: Context): Boolean {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || ContextCompat.checkSelfPermission(
             context,
