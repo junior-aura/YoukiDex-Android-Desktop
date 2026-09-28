@@ -4649,12 +4649,17 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         val focused = AppUtils.currentApp
         snapQuietUntil = System.currentTimeMillis() + 3000
         Thread {
-            // am stack list is top-first; the focused app goes first (left)
-            val tasks = stackTasks(shizuku).filter { isFreeformTask(shizuku, it.id) }
+            // am stack list is top-first; the focused app goes first (left).
+            // Minimized windows count too (One UI turns them into a floating
+            // bubble on HOME; measured: tiling visible-only skipped Calendar)
+            // and are brought back before being placed.
+            val tasks = stackTasks(shizuku, includeHidden = true).distinctBy { it.id }
+                .filter { isFreeformTask(shizuku, it.id) }
                 .sortedBy { if (it.pkg == focused) 0 else 1 }
             val cells = com.youki.dex.utils.WindowSnapper.tile(area, tasks.size, minSide)
-            tasks.zip(cells).forEach { (task, cell) ->
+            tasks.zip(cells).reversed().forEach { (task, cell) ->
                 restoreBounds[task.id] = android.graphics.Rect(task.bounds)
+                try { activityManager.moveTaskToFront(task.id, 0) } catch (e: Exception) {}
                 snapTaskTo(task, cell)
             }
             com.youki.dex.utils.EventJournal.log(context, "tile: ${tasks.size} windows, ${cells.size} placed")
