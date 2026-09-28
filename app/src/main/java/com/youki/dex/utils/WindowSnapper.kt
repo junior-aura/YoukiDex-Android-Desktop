@@ -82,6 +82,34 @@ object WindowSnapper {
         else -> null
     }
 
+    /**
+     * "Side by side" for [n] windows inside [area], in order (first = left /
+     * top-left). Sized by what fits the freeform floor [minSide]: two rows
+     * only if half the height holds it, columns up to width / minSide. On a
+     * 1600x720 phone: 2 -> halves, 3 -> three columns; on a tablet 4 -> 2x2.
+     * Windows beyond the capacity are left as they are (list is shorter).
+     */
+    fun tile(area: Rect, n: Int, minSide: Int): List<Rect> {
+        if (n <= 0 || area.isEmpty) return emptyList()
+        val maxRows = if (area.height() / 2 >= minSide) 2 else 1
+        val maxCols = maxOf(1, area.width() / minSide)
+        val k = minOf(n, maxRows * maxCols)
+        val rows = if (k > maxCols) 2 else 1
+        val out = ArrayList<Rect>(k)
+        for (r in 0 until rows) {
+            // the first row takes the extra window when k is odd
+            val inRow = if (rows == 1) k else if (r == 0) (k + 1) / 2 else k / 2
+            val top = area.top + area.height() * r / rows
+            val bottom = area.top + area.height() * (r + 1) / rows
+            for (c in 0 until inRow) {
+                val left = area.left + area.width() * c / inRow
+                val right = area.left + area.width() * (c + 1) / inRow
+                out.add(Rect(left, top, right, bottom))
+            }
+        }
+        return out
+    }
+
     /** [window] covers at least half of [target]. */
     fun occupies(window: Rect, target: Rect): Boolean {
         val i = Rect(window)

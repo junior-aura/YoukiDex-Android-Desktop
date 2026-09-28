@@ -561,6 +561,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dock.findViewById<ImageView>(R.id.expand_btn)?.setOnClickListener {
             animateBtn(it) { toggleExpandFocused() }
         }
+        dock.findViewById<ImageView>(R.id.tile_btn)?.setOnClickListener {
+            animateBtn(it) { tileWindows() }
+        }
 
         // ── Wallpaper button ──────────────────────────────────────────────────
         // Opens the app chosen by the user in settings
@@ -4555,6 +4558,36 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         )
         AppUtils.resizeTaskTo(context, fitted, task.id)
         com.youki.dex.utils.EventJournal.log(context, "snap: task ${task.id} ${task.pkg} -> ${fitted.toShortString()}")
+    }
+
+    // ── Side by side (dock button) ─────────────────────────────────────────
+    /**
+     * Arranges the visible app windows side by side (WindowSnapper.tile),
+     * the focused one first. Vendor-independent: One UI claims every drag
+     * edge on the phone, so this is the phone's way to run apps in parallel.
+     */
+    private fun tileWindows() {
+        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+        if (!shizuku.hasPermission) {
+            Toast.makeText(this, R.string.snap_needs_shizuku, Toast.LENGTH_LONG).show()
+            return
+        }
+        val area = smartAvailableArea()
+        val minSide = Utils.dpToPx(context, 220)
+        val focused = AppUtils.currentApp
+        snapQuietUntil = System.currentTimeMillis() + 3000
+        Thread {
+            // am stack list is top-first; the focused app goes first (left)
+            val tasks = stackTasks(shizuku).filter { isFreeformTask(shizuku, it.id) }
+                .sortedBy { if (it.pkg == focused) 0 else 1 }
+            val cells = com.youki.dex.utils.WindowSnapper.tile(area, tasks.size, minSide)
+            tasks.zip(cells).forEach { (task, cell) ->
+                restoreBounds[task.id] = android.graphics.Rect(task.bounds)
+                snapTaskTo(task, cell)
+            }
+            com.youki.dex.utils.EventJournal.log(context, "tile: ${tasks.size} windows, ${cells.size} placed")
+            snapQuietUntil = System.currentTimeMillis() + 1500
+        }.start()
     }
 
     // ── Expand / restore the focused window (dock button) ─────────────────

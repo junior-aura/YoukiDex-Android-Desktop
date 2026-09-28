@@ -65,6 +65,17 @@
                 android:clickable="true"
                 android:focusable="true">
 
+                <!-- ClauDEX: arrange the open windows side by side -->
+                <ImageView
+                    android:id="@+id/tile_btn"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_margin="3dp"
+                    android:background="@null"
+                    android:contentDescription="@string/tile_windows"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_tile_windows" />
+
                 <!-- ClauDEX: expand / restore the focused window -->
                 <ImageView
                     android:id="@+id/expand_btn"

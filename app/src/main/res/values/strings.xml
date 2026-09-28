@@ -1081,5 +1081,6 @@ To uninstall, remove Device Administrator permission first.</string>
     <string name="launch_smart">Automatic</string>
     <string name="snap_needs_shizuku">Snapping and expanding windows need Shizuku running</string>
     <string name="expand_window">Expand or restore the focused window</string>
+    <string name="tile_windows">Arrange open windows side by side</string>
 
 </resources>
