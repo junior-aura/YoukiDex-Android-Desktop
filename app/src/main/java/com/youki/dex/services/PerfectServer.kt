@@ -375,6 +375,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         migrateRememberedLaunchModes()
         migrateSlimDock()
         migrateSlimDockComposition()
+        migrateBadgeOnly()
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
         secondary = sharedPreferences.getBoolean("prefer_last_display", false)
         context = DeviceUtils.getDisplayContext(this, secondary)
@@ -4522,6 +4523,21 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         com.youki.dex.utils.EventJournal.log(this, "migration: slim dock composition")
     }
 
+    /**
+     * One-time "badge only" (owner, 28/09): ClauDEX's own notification popup
+     * duplicated the system heads-up (measured on a SM-A055M: both showed for
+     * one notification). The dot on the dock is ClauDEX's whole job now.
+     */
+    private fun migrateBadgeOnly() {
+        val key = "claudex_badge_only_v1"
+        if (sharedPreferences.getBoolean(key, false)) return
+        sharedPreferences.edit {
+            putBoolean("show_notifications", false)
+            putBoolean(key, true)
+        }
+        com.youki.dex.utils.EventJournal.log(this, "migration: badge only (own popup off)")
+    }
+
     // ── Snap on drop ─────────────────────────────────────────────────────
     // The user drags a window by the system's own caption; accessibility
     // reports its bounds while it moves (measured on a SM-A055M, including
@@ -5549,7 +5565,7 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
         if (Utils.notificationPanelVisible) {
             updateNotificationPanel()
         } else {
-            if (sharedPreferences.getBoolean("show_notifications", true)) {
+            if (sharedPreferences.getBoolean("show_notifications", false)) {
                 val notification = sbn.notification
                 val isForegroundService = (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0
                 if ((sbn.isOngoing && !sharedPreferences.getBoolean("show_ongoing", false))
@@ -6690,11 +6706,11 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
             launchApp("standard", packageName)
         }
         notificationsBtn.setImageResource(
-            if (sharedPreferences.getBoolean("show_notifications", true))
+            if (sharedPreferences.getBoolean("show_notifications", false))
                 R.drawable.ic_notifications else R.drawable.ic_notifications_off
         )
         notificationsBtn.setOnClickListener {
-            val showNotifications = sharedPreferences.getBoolean("show_notifications", true)
+            val showNotifications = sharedPreferences.getBoolean("show_notifications", false)
             sharedPreferences.edit { putBoolean("show_notifications", !showNotifications) }
             notificationsBtn.setImageResource(
                 if (!showNotifications) R.drawable.ic_notifications else R.drawable.ic_notifications_off

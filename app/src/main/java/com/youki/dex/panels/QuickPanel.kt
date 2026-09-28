@@ -152,7 +152,12 @@ class QuickPanel(
             }
         }
         bt.setOnLongClickListener { openActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)); true }
-        v.findViewById<TextView>(R.id.qp_notifications).setOnClickListener { dismiss(); onOpenShade() }
+        // measured: opening the shade in the same instant the panel closes lost
+        // it (the ongoing tap collapsed it) - open it a moment later
+        v.findViewById<TextView>(R.id.qp_notifications).setOnClickListener {
+            dismiss()
+            main.postDelayed({ onOpenShade() }, 150)
+        }
     }
 
     /** Runs [cmd] over Shizuku off the main thread, then [after] on it (state settles in ~1 s). */
