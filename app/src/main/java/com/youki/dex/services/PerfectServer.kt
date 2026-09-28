@@ -4521,14 +4521,18 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      */
     private fun stackTasks(shizuku: com.youki.dex.utils.ShizukoManager, includeHidden: Boolean = false): List<StackTask> {
         val out = shizuku.runShellSync("am stack list") ?: return emptyList()
-        val vis = if (includeHidden) "" else "visible=true.*"
-        val re = Regex("""taskId=(\d+):.*bounds=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\].*""" + vis + """topActivity=ComponentInfo\{([^/}]+)/""")
+        // the package comes from the line's base component: hidden tasks have
+        // no topActivity= field (measured on a SM-A055M: after HOME every
+        // freeform task line ends at visible=false), so matching on it made the
+        // switcher show "no open windows" with three open
+        val re = Regex("""taskId=(\d+): ([^/\s]+)/\S+ bounds=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]""")
         return out.lineSequence().mapNotNull { line ->
+            if (!includeHidden && !line.contains("visible=true")) return@mapNotNull null
             val m = re.find(line) ?: return@mapNotNull null
             val g = m.groupValues
-            val pkg = g[6]
+            val pkg = g[2]
             if (pkg == packageName || pkg in homePackages) return@mapNotNull null
-            StackTask(g[1].toInt(), pkg, android.graphics.Rect(g[2].toInt(), g[3].toInt(), g[4].toInt(), g[5].toInt()))
+            StackTask(g[1].toInt(), pkg, android.graphics.Rect(g[3].toInt(), g[4].toInt(), g[5].toInt(), g[6].toInt()))
         }.toList()
     }
 
