@@ -481,7 +481,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         gestureDetector = GestureDetector(context, object : OnSwipeListener() {
             override fun onSwipe(direction: Direction): Boolean {
                 if (direction == Direction.UP) {
-                    if (!isPinned) pinDock() else if (!appMenuVisible) showAppMenu()
+                    // ClauDEX: an on-demand dock is never pinned by a swipe - the
+                    // owner (29/09) found it pinned after an accidental swipe, and
+                    // the aim is less bar, more screen. Up opens the drawer.
+                    if (isOnDemandDock()) { if (!appMenuVisible) showAppMenu() }
+                    else if (!isPinned) pinDock() else if (!appMenuVisible) showAppMenu()
                 } else if (direction == Direction.DOWN) {
                     if (appMenuVisible) hideAppMenu() else unpinDock()
                 } else if (direction == Direction.LEFT) {
@@ -1326,14 +1330,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             if (taskId == -1) {
                 launchApp(null, app.packageName)
             } else {
-                // Toggle minimize: if app is in foreground → hide it, otherwise → show it
-                val runningTasks = activityManager.getRunningTasks(1)
-                val foregroundPackage = runningTasks.firstOrNull()?.topActivity?.packageName
-                if (foregroundPackage == app.packageName) {
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                } else {
-                    activityManager.moveTaskToFront(taskId, 0)
-                }
+                // ClauDEX: the old "focused -> HOME" toggle read getRunningTasks,
+                // which never sees another app, so it only ever brought to front;
+                // openFavorite also turns a fullscreen task into a window
+                openFavorite(app.packageName)
             }
             // auto-pin/unpin after direct launch only
             if (isOnDemandDock()) {
@@ -3011,7 +3011,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         com.youki.dex.panels.SideRail(
             context, windowManager, sharedPreferences,
             favorites = { if (::pinnedApps.isInitialized) ArrayList(pinnedApps) else emptyList() },
-            onOpen = { app -> launchApp(getDefaultLaunchMode(app.packageName), app.packageName) },
+            onOpen = { app -> openFavorite(app.packageName) },
             onWindows = { showSwitcher() },
             onOptions = { quickPanel.toggle() }
         )
@@ -4836,6 +4836,47 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      * the edge, drawn scaled (mFreeformStashMode=2, stash scale 0.92 measured
      * on a SM-A055M). Resizing a stashed task left it drawn at ~64%.
      */
+    /** Windowing mode of task [id] ("fullscreen", "freeform", "multi-window"...), null if unread. */
+    private fun taskWindowingMode(shizuku: com.youki.dex.utils.ShizukoManager, id: Int): String? =
+        shizuku.runShellSync("dumpsys activity activities | grep -m1 'Task{.* #$id '")
+            ?.substringAfter(" mode=", "")?.substringBefore(' ')?.takeIf { it.isNotEmpty() }
+
+    /**
+     * Launching [pkg] again opens ANOTHER task instead of reusing the open one.
+     * Measured on a SM-A055M with a launcher intent in freeform mode: Pokemon GO
+     * (singleTask) and Waze (standard) turned their fullscreen task into a
+     * window, same task; Chrome (singleInstancePerTask) opened a second task
+     * and left the fullscreen one behind.
+     */
+    private fun relaunchMakesNewTask(pkg: String): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return false
+        val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        val mode = try { packageManager.resolveActivity(intent, 0)?.activityInfo?.launchMode } catch (e: Exception) { null }
+        return mode == ActivityInfo.LAUNCH_SINGLE_INSTANCE_PER_TASK
+    }
+
+    /**
+     * A favorite tapped, in the dock or the portrait rail. Not open -> launch.
+     * Open in FULLSCREEN -> launch again, which turns that task into a window
+     * (owner, 29/09: "Pokemon leaves fullscreen and settles as a landscape
+     * window - multitasking without losing the app"), unless the app would
+     * open a second task instead. Open as a window (or an app that would
+     * duplicate) -> just bring it to the front.
+     */
+    private fun openFavorite(pkg: String) {
+        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+        if (!shizuku.hasPermission) { launchApp(null, pkg); return }
+        Thread {
+            val task = stackTasks(shizuku, includeHidden = true).firstOrNull { it.pkg == pkg }
+            val mode = task?.let { taskWindowingMode(shizuku, it.id) }
+            val convert = task != null && mode == "fullscreen" && !relaunchMakesNewTask(pkg)
+            com.youki.dex.utils.EventJournal.log(context, "favorite $pkg task=${task?.id} mode=$mode -> " +
+                if (task == null) "launch" else if (convert) "launch (to a window)" else "front")
+            if (task == null || convert) launchHandler.post { launchApp(null, pkg) }
+            else try { activityManager.moveTaskToFront(task.id, 0) } catch (e: Exception) {}
+        }.start()
+    }
+
     private fun isFreeformTask(shizuku: com.youki.dex.utils.ShizukoManager, id: Int): Boolean {
         val out = shizuku.runShellSync("dumpsys activity activities | grep -A20 'Task{.* #$id '") ?: return false
         val lines = out.lineSequence().toList()
