@@ -1377,23 +1377,27 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      * setTaskWindowingMode (am task set-windowing-mode is absent on One UI).
      */
     override fun onDockAppSwipedUp(app: DockApp, view: View) {
-        val open = app.tasks.firstOrNull { it.id != -1 }
-        com.youki.dex.utils.EventJournal.log(context, "dock: swipe-up ${app.packageName} open=${open?.id}")
-        if (open == null) {
+        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+        if (!shizuku.hasPermission) {
             launchApp("fullscreen", app.packageName, rememberMode = false)
-        } else {
-            try { activityManager.moveTaskToFront(open.id, 0) } catch (e: Exception) {}
-            val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
-            if (shizuku.hasPermission) {
-                val area = smartAvailableArea()
-                Thread {
-                    val target = com.youki.dex.utils.WindowPlanner.fitOrientation(
-                        area, lockedOrientation(app.packageName, null), Utils.dpToPx(context, 220)
-                    )
-                    AppUtils.resizeTaskTo(context, target, open.id)
-                }.start()
-            }
+            if (isOnDemandDock()) dockLaunchedApp()
+            return
         }
+        val area = smartAvailableArea()
+        Thread {
+            // the dock's own task ids come from getRunningTasks, which only
+            // sees this app: measured on a SM-A055M, an open Pokemon GO window
+            // read as not open and the "fullscreen" launch just brought it
+            // front, still a window
+            val open = stackTasks(shizuku, includeHidden = true).firstOrNull { it.pkg == app.packageName }
+            com.youki.dex.utils.EventJournal.log(context, "dock: swipe-up ${app.packageName} open=${open?.id}")
+            if (open == null) {
+                launchHandler.post { launchApp("fullscreen", app.packageName, rememberMode = false) }
+            } else {
+                try { activityManager.moveTaskToFront(open.id, 0) } catch (e: Exception) {}
+                AppUtils.resizeTaskTo(context, area, open.id)
+            }
+        }.start()
         if (isOnDemandDock()) dockLaunchedApp()
     }
 
@@ -1978,9 +1982,14 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // itself, so the next launch is decided fresh instead of freezing the
         // first result for that app.
         var smartBounds: android.graphics.Rect? = null
+        var smartFill: android.graphics.Rect? = null
+        var smartBefore: List<android.graphics.Rect> = emptyList()
         if (launchMode == "smart") {
             if (displayId == Display.DEFAULT_DISPLAY) {
-                val plan = com.youki.dex.utils.WindowPlanner.plan(smartAvailableArea(), visibleAppWindows())
+                smartBefore = visibleAppWindows()
+                val plan = com.youki.dex.utils.WindowPlanner.plan(smartAvailableArea(), smartBefore)
+                smartFill = plan.bounds
+                // launch bounds only: see fitOrientation and fitToPlan
                 smartBounds = plan.bounds?.let {
                     com.youki.dex.utils.WindowPlanner.fitOrientation(
                         it, lockedOrientation(packageName, intent), Utils.dpToPx(context, 220)
@@ -2090,8 +2099,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             }
 
             com.youki.dex.utils.EventJournal.log(context, "launch $packageName mode=$launchMode smart=$smartBounds")
-            if (smartBounds != null && packageName != null)
-                fitToClampedTop(packageName, smartBounds)
+            if (smartFill != null && packageName != null)
+                fitToPlan(packageName, smartFill, smartBefore)
 
             if (!wasAlreadyRunning && packageName != null && launchMode != "fullscreen") {
                 // 400ms: long enough for the system to finish creating the
@@ -4470,36 +4479,58 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private fun freeformMinTop() = sharedPreferences.getInt(freeformMinTopKey(), 0)
 
     /**
-     * After a "smart" launch, see where the window really landed. Same size
-     * but lower top is the window manager's shift: remember that top for the
-     * next plans and, with Shizuku, shrink this window back inside the planned
-     * bottom edge. Not wired to checkTaskCreatedOrRetry on purpose - that
-     * relies on getRunningTasks(), which only returns this app's own tasks.
+     * After a "smart" launch, make the window take the planned rectangle
+     * [fill]. Launch bounds are only a request - measured on a SM-A055M the
+     * window manager shifts a window below top 55, swaps width and height for
+     * a portrait-locked app, and ignores them for a task that already existed
+     * (Pokemon GO came back at [440,132][1105,1401] on a 720 px high screen).
+     * A resize AFTER the launch is honored to the pixel, even a landscape
+     * rectangle for a portrait-only app, which lays itself out in it (owner,
+     * 29/09: fill the space proportionally). So the real bounds come from
+     * `am stack list` - accessibility clips them to the screen, and missed
+     * exactly that window - and get corrected. A window that was already on
+     * screen before the launch ([before]) is left where it is.
      */
-    private fun fitToClampedTop(pkg: String, planned: android.graphics.Rect) {
+    private fun fitToPlan(pkg: String, fill: android.graphics.Rect, before: List<android.graphics.Rect>) {
         launchHandler.postDelayed({
-            // accessibility reports the window CLIPPED to the screen (measured:
-            // [0,55][1510,720] for a real [0,55][1510,730]), so the signature is
-            // same left/right edges and a lower top; the height is not comparable
-            val actual = shiftedWindow(planned)
-            com.youki.dex.utils.EventJournal.log(context, "fit $pkg planned=$planned actual=$actual floor=${freeformMinTop()}")
-            if (actual == null) return@postDelayed
-            if (actual.top > freeformMinTop())
-                sharedPreferences.edit().putInt(freeformMinTopKey(), actual.top).apply()
-            // the height was kept, so the real bottom went down by the same shift
-            if (planned.bottom <= actual.top) return@postDelayed
-            val target = android.graphics.Rect(planned.left, actual.top, planned.right, planned.bottom)
             Thread {
                 val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
                 if (!shizuku.hasPermission) {
-                    com.youki.dex.utils.EventJournal.log(context, "fit: no Shizuku, floor learned only")
+                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: no Shizuku")
                     return@Thread
                 }
-                val taskId = shizuku.runShellSync("am stack list")?.lineSequence()
-                    ?.firstOrNull { it.contains("visible=true") && it.contains("topActivity=ComponentInfo{$pkg/") }
-                    ?.substringAfter("taskId=")?.substringBefore(":")?.trim()?.toIntOrNull()
-                com.youki.dex.utils.EventJournal.log(context, "fit: task=$taskId -> $target")
-                if (taskId != null) AppUtils.resizeTaskTo(context, target, taskId)
+                val task = stackTasks(shizuku).firstOrNull { it.pkg == pkg }
+                if (task == null) {
+                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: no visible task")
+                    return@Thread
+                }
+                val a = task.bounds
+                if (before.any { sizeDistance(it, a) <= 12 }) {
+                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: was already on screen at ${a.toShortString()}")
+                    return@Thread
+                }
+                if (!isFreeformTask(shizuku, task.id)) {
+                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: task ${task.id} not a plain freeform window")
+                    return@Thread
+                }
+                val target = android.graphics.Rect(fill.left, maxOf(fill.top, freeformMinTop()), fill.right, fill.bottom)
+                if (sizeDistance(a, target) <= 8) {
+                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: landed as planned ${a.toShortString()}")
+                    return@Thread
+                }
+                AppUtils.resizeTaskTo(context, target, task.id)
+                Thread.sleep(700)
+                val got = stackTasks(shizuku).firstOrNull { it.id == task.id }?.bounds
+                com.youki.dex.utils.EventJournal.log(context,
+                    "fit $pkg task=${task.id} landed=${a.toShortString()} -> ${target.toShortString()} got=${got?.toShortString()}")
+                // shifted down with the height kept: that top is the floor
+                // (55 on the SM-A055M, no inset reports it) - learn it and
+                // pull the bottom back inside
+                if (got != null && got.top > target.top && got.height() == target.height()) {
+                    sharedPreferences.edit().putInt(freeformMinTopKey(), got.top).apply()
+                    AppUtils.resizeTaskTo(context, android.graphics.Rect(target.left, got.top, target.right, target.bottom), task.id)
+                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: floor ${got.top} learned, bottom pulled back")
+                }
             }.start()
         }, 900)
     }
@@ -4739,12 +4770,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         Math.abs(a.width() - b.width()) * 4 + Math.abs(a.height() - b.height()) * 4 +
             Math.abs(a.left - b.left) + Math.abs(a.top - b.top)
 
+    /** The whole [target], whatever orientation the app declares: a resize of
+     *  a live task is honored (see fitToPlan) and the app fills it. */
     private fun snapTaskTo(task: StackTask, target: android.graphics.Rect) {
-        val fitted = com.youki.dex.utils.WindowPlanner.fitOrientation(
-            target, lockedOrientation(task.pkg, null), Utils.dpToPx(context, 220)
-        )
-        AppUtils.resizeTaskTo(context, fitted, task.id)
-        com.youki.dex.utils.EventJournal.log(context, "snap: task ${task.id} ${task.pkg} -> ${fitted.toShortString()}")
+        AppUtils.resizeTaskTo(context, target, task.id)
+        com.youki.dex.utils.EventJournal.log(context, "snap: task ${task.id} ${task.pkg} -> ${target.toShortString()}")
     }
 
     // ── ClauDEX task switcher (dock's recents button) ─────────────────────
@@ -4864,9 +4894,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         Thread {
             val tasks = stackTasks(shizuku)
             val task = tasks.firstOrNull { it.pkg == focused } ?: tasks.firstOrNull() ?: return@Thread
-            val expanded = com.youki.dex.utils.WindowPlanner.fitOrientation(
-                area, lockedOrientation(task.pkg, null), Utils.dpToPx(context, 220)
-            )
+            val expanded = android.graphics.Rect(area)
             val isExpanded = Math.abs(task.bounds.left - expanded.left) <= 4 &&
                 Math.abs(task.bounds.right - expanded.right) <= 4 &&
                 Math.abs(task.bounds.top - expanded.top) <= 12
@@ -4933,11 +4961,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      * after a launch the window's root node is often still null, so its
      * package cannot be read yet.
      */
-    private fun shiftedWindow(planned: android.graphics.Rect): android.graphics.Rect? =
-        visibleAppWindows().firstOrNull {
-            it.left == planned.left && it.right == planned.right && it.top > planned.top
-        }
-
     /**
      * Area a new window may use, in screen px: the display minus the space the
      * status and navigation bars RESERVE, minus the dock only when it is pinned.

@@ -88,6 +88,12 @@ object WindowPlanner {
      * 1510x665 got 665x1510, most of it below the screen). So the app gets the
      * full side of [r] along its own axis, 9:16 across, never below [minSide]
      * (the freeform floor: 220 dp, 412 px there), centered inside [r].
+     *
+     * LAUNCH BOUNDS ONLY. The swap happens when the window is created; a
+     * resize of the live task afterwards is honored to the pixel, landscape
+     * rectangle included (measured 29/09: Pokemon GO at 840x665 and 738x665,
+     * drawing fine), so snap, expand and the post-launch fit give the app the
+     * whole rectangle and let it fill it.
      */
     fun fitOrientation(r: Rect, orientation: Orientation, minSide: Int): Rect {
         val portraitInLandscape = orientation == Orientation.PORTRAIT && r.width() > r.height()
