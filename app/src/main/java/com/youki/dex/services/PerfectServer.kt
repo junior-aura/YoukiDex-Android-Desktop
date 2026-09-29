@@ -4557,21 +4557,27 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 }
                 com.youki.dex.utils.EventJournal.log(context,
                     "fit $pkg task=${task.id} landed=${a.toShortString()} -> ${target.toShortString()} got=${got?.toShortString()}")
-                // shifted STRAIGHT down with the height kept: that top is the
-                // floor (55 on the SM-A055M, no inset reports it) - learn it and
-                // pull the bottom back inside. Same left/right edges required:
-                // reading an unapplied resize (Waze still at its own cascade
-                // spot, top 83) as a shift taught a floor of 83 and every window
-                // after it lost 28 px at the top.
-                if (got != null && got.left == target.left && got.right == target.right &&
-                    got.top > target.top && got.height() == target.height()
-                ) {
-                    sharedPreferences.edit().putInt(freeformMinTopKey(), got.top).apply()
-                    AppUtils.resizeTaskTo(context, android.graphics.Rect(target.left, got.top, target.right, target.bottom), task.id)
-                    com.youki.dex.utils.EventJournal.log(context, "fit $pkg: floor ${got.top} learned, bottom pulled back")
-                }
+                if (got != null) applyFloorShift(task.id, target, got)
             }.start()
         }, 900)
+    }
+
+    /**
+     * [got] is where task [id] really landed after a resize to [target]. Shifted
+     * STRAIGHT down with the height kept means that top is the freeform floor
+     * (55 on the SM-A055M, no inset reports it): learn it and pull the bottom
+     * back inside. Same left/right edges required - reading an unapplied resize
+     * (Waze still at its own cascade spot, top 83) as a shift taught a floor of
+     * 83 and every window after it lost 28 px at the top. Background thread.
+     */
+    private fun applyFloorShift(id: Int, target: android.graphics.Rect, got: android.graphics.Rect): Boolean {
+        if (got.left != target.left || got.right != target.right ||
+            got.top <= target.top || got.height() != target.height()
+        ) return false
+        sharedPreferences.edit().putInt(freeformMinTopKey(), got.top).apply()
+        AppUtils.resizeTaskTo(context, android.graphics.Rect(target.left, got.top, target.right, target.bottom), id)
+        com.youki.dex.utils.EventJournal.log(context, "floor ${got.top} learned from task $id, bottom pulled back")
+        return true
     }
 
     /**
@@ -4825,9 +4831,21 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     /** The whole [target], whatever orientation the app declares: a resize of
      *  a live task is honored (see fitToPlan) and the app fills it. */
-    private fun snapTaskTo(task: StackTask, target: android.graphics.Rect) {
+    private fun snapTaskTo(task: StackTask, planned: android.graphics.Rect) {
+        // a floor learned by an earlier window of the same tile applies here too
+        val target = android.graphics.Rect(planned)
+        if (freeformMinTop() > target.top && freeformMinTop() < target.bottom) target.top = freeformMinTop()
         AppUtils.resizeTaskTo(context, target, task.id)
         com.youki.dex.utils.EventJournal.log(context, "snap: task ${task.id} ${task.pkg} -> ${target.toShortString()}")
+        // floor not learned yet (first run, or just reset): measured on a
+        // SM-A055M, a tile asked for top 45 got 55, and the bottom sank 10 px
+        // under the pinned dock. Checked only until it is known - it costs a
+        // stack read (~100 ms) per window.
+        if (freeformMinTop() == 0) {
+            val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+            Thread.sleep(400)
+            stackTasks(shizuku).firstOrNull { it.id == task.id }?.bounds?.let { applyFloorShift(task.id, target, it) }
+        }
     }
 
     // ── ClauDEX task switcher (dock's recents button) ─────────────────────
