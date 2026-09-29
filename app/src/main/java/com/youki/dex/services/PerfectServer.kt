@@ -2662,16 +2662,20 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     updateRunningTasks()
                     removePopup(view)
                 } else if (action.text == getString(R.string.close)) {
-                    val taskId = findRunningTaskId(app.packageName)
-                    if (taskId != -1) {
-                        AppUtils.closeTask(context, taskId)
-                        // Same 400ms cold-start-safe delay pattern
-                        // launchApp uses for its own post-launch task
-                        // lookup — here it's just giving `am task remove`
-                        // time to actually finish before the dock refreshes
-                        // its running-apps list, rather than racing it.
-                        dockHandler.postDelayed({ updateRunningTasks(true) }, 400)
-                    }
+                    // ClauDEX: findRunningTaskId reads getRunningTasks, which
+                    // only sees this app - for any other app it found nothing,
+                    // so "Close" did nothing (measured on a SM-A055M). With
+                    // Shizuku every task of the package comes from am stack list.
+                    val pkg = app.packageName
+                    Thread {
+                        val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
+                        val ids = if (shizuku.hasPermission)
+                            stackTasks(shizuku, includeHidden = true).filter { it.pkg == pkg }.map { it.id }
+                        else listOf(findRunningTaskId(pkg)).filter { it != -1 }
+                        ids.forEach { AppUtils.closeTask(context, it) }
+                        com.youki.dex.utils.EventJournal.log(context, "dock: close $pkg tasks=$ids")
+                        launchHandler.postDelayed({ updateRunningTasks(true) }, 400)
+                    }.start()
                     removePopup(view)
                 } else if (action.text == getString(R.string.standard)) {
                     removePopup(view)

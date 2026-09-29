@@ -832,6 +832,18 @@ object AppUtils {
      */
     fun closeTask(context: Context, taskId: Int) {
         if (taskId < 0) return
+        // ClauDEX: `am task remove` does not exist on every ROM (SM-A055M:
+        // "Error: unknown command 'remove'"), so "Close" never closed there.
+        // `am stack remove` does it for a freeform task, which is its own root
+        // task - the Windows switcher has used it all along. Shizuku first:
+        // `am` run as this app can never remove another app's task.
+        try {
+            val shizuku = ShizukoManager.getInstance(context)
+            if (shizuku.hasPermission) {
+                shizuku.runShellSync("am stack remove $taskId")
+                return
+            }
+        } catch (e: Exception) {}
         val cmd = "am task remove $taskId"
 
         try {
