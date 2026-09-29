@@ -717,11 +717,12 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // ClauDEX: lets a tap anywhere else dismiss a summoned dock (ACTION_OUTSIDE)
         if (isOnDemandDock())
             dockLayoutParams.flags = dockLayoutParams.flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-        dockLayoutParams.screenOrientation =
-            if (sharedPreferences.getBoolean("lock_landscape", true))
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        // ClauDEX: the dock overlay never asks for an orientation. It used to ask
+        // for landscape (lock_landscape), so summoning it over a fullscreen
+        // portrait app rotated the screen and hiding it rotated back - measured
+        // on a SM-A055M: orientation flipped with every dock shown/peek/hidden,
+        // 8 times in 17 s. The desktop's own activity keeps the desktop landscape.
+        dockLayoutParams.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
         // Dock can be docked to the top or bottom of the screen via the
         // "dock_position" preference — see DockPositionUtils for the
@@ -2178,10 +2179,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private fun setOrientation() {
         val lockLandscape = sharedPreferences.getBoolean("lock_landscape", true)
         DeviceUtils.freezeRotation(lockLandscape)
-        dockLayoutParams.screenOrientation =
-            if (lockLandscape)
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        // ClauDEX: never an orientation request from the overlay (see above)
+        dockLayoutParams.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         safeUpdateViewLayout(dock, dockLayoutParams)
     }
 
@@ -3457,7 +3456,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (newConfig.orientation != orientation) journalState("config orientation=${newConfig.orientation}")
+        if (newConfig.orientation != orientation) {
+            lastRotationAt = System.currentTimeMillis()
+            journalState("config orientation=${newConfig.orientation}")
+        }
         orientation = newConfig.orientation
         // GUARD: this can fire before onServiceConnected finishes setting up
         // the dock (overlay permission not granted yet, or a config change
@@ -4550,8 +4552,13 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private var dragWindow: android.graphics.Rect? = null
     private var dragExtremes: android.graphics.Rect? = null
     private var dragOthers: List<android.graphics.Rect> = emptyList()
+    private var dragStartX = 0
+    private var dragStartY = 0
     // our own resizes move windows too - ignore bounds changes until then
     @Volatile private var snapQuietUntil = 0L
+    // a rotation relayouts every window by a pixel or two, which read as a drag
+    // (measured: [0,0][720,1599] -> [0,0][720,1600] started one) - ignore a moment
+    @Volatile private var lastRotationAt = 0L
     private var warnedNoShizuku = false
     private val snapDrop = Runnable { onDragDropped() }
 
@@ -4562,6 +4569,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         if (now < snapQuietUntil || now - lastSnapSample < 50) return
         lastSnapSample = now
         val current = visibleAppWindows()
+        if (now - lastRotationAt < 1500) {
+            dragWindow = null; dragExtremes = null
+            lastWindows = current
+            return
+        }
         val moving = dragWindow
         if (moving == null) {
             // a rect that is new, with the size of one that is gone = moved
@@ -4571,6 +4583,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             if (moved != null) {
                 val from = gone.first { sameSize(it, moved) }
                 dragWindow = moved
+                dragStartX = from.centerX()
+                dragStartY = from.top
                 dragExtremes = android.graphics.Rect(from.centerX(), from.top, from.centerX(), from.top).apply { union(moved.centerX(), moved.top) }
                 dragOthers = lastWindows.filter { it != from }
                 com.youki.dex.utils.EventJournal.log(context, "drag start ${from.toShortString()} -> ${moved.toShortString()}")
@@ -4601,7 +4615,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         val dm = resources.displayMetrics
         val screen = android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels)
         val area = smartAvailableArea()
-        val zone = com.youki.dex.utils.WindowSnapper.zoneFor(extremes, screen, area, Utils.dpToPx(context, 64), Utils.dpToPx(context, 24))
+        val zone = com.youki.dex.utils.WindowSnapper.zoneFor(
+            extremes, screen, area, Utils.dpToPx(context, 64), Utils.dpToPx(context, 24),
+            dragStartX, dragStartY, Utils.dpToPx(context, 48)
+        )
         com.youki.dex.utils.EventJournal.log(context, "drag window=${window.toShortString()} finger=${extremes.toShortString()} zone=$zone")
         if (zone == com.youki.dex.utils.WindowSnapper.Zone.NONE) return
         val minSide = Utils.dpToPx(context, 220)

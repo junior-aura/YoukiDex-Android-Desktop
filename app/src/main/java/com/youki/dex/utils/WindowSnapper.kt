@@ -33,11 +33,18 @@ object WindowSnapper {
      * screen) - reading the body as "pushed down" picked a bottom quarter for
      * what was a plain drag to the left edge.
      */
-    fun zoneFor(fingers: Rect, screen: Rect, area: Rect, edgeX: Int, edgeY: Int): Zone {
-        val left = fingers.left < screen.left + edgeX
-        val right = fingers.right > area.right - edgeX
-        val top = fingers.top < screen.top + edgeY
-        val bottom = fingers.bottom > screen.bottom - 2 * edgeY
+    fun zoneFor(
+        fingers: Rect, screen: Rect, area: Rect, edgeX: Int, edgeY: Int,
+        startX: Int, startY: Int, minTravel: Int
+    ): Zone {
+        // an edge counts only if the finger also TRAVELLED toward it: measured
+        // on a SM-A055M, grabbing the caption of a window already at the top
+        // dips the finger a few px, which read as "pushed to the top" and threw
+        // a window being dragged sideways back to the center, 3 times in 20 s
+        val left = fingers.left < screen.left + edgeX && startX - fingers.left >= minTravel
+        val right = fingers.right > area.right - edgeX && fingers.right - startX >= minTravel
+        val top = fingers.top < screen.top + edgeY && startY - fingers.top >= minTravel
+        val bottom = fingers.bottom > screen.bottom - 2 * edgeY && fingers.bottom - startY >= minTravel
         return when {
             left && right -> Zone.NONE                 // dragged across: ambiguous
             left && bottom && !top -> Zone.BOTTOM_LEFT
