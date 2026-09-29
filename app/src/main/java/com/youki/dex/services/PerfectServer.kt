@@ -296,6 +296,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     // and hideDock() clear every dockHandler message, and the on-demand dock
     // hides on each launch - which silently cancelled these checks.
     private val launchHandler = Handler(Looper.getMainLooper())
+    private val canFreezeRotation by lazy {
+        checkSelfPermission("android.permission.SET_ORIENTATION") == PackageManager.PERMISSION_GRANTED
+    }
     // ClauDEX quick panel (panels/QuickPanel.kt), opened from the status area
     private val quickPanel by lazy {
         com.youki.dex.panels.QuickPanel(context, windowManager, sharedPreferences) {
@@ -373,6 +376,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // inflated (lateinit notificationBtn) - crash in onCreate, the flag
         // never reached disk, and every restart crashed again: no desktop.
         migrateRememberedLaunchModes()
+        migrateFloorReset()
         migrateSlimDock()
         migrateSlimDockComposition()
         migrateBadgeOnly()
@@ -1442,7 +1446,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             lastWindowChangeTime = now
 
             // Re-apply rotation lock — now only runs once per 600ms max
-            if (sharedPreferences.getBoolean("lock_landscape", true)) {
+            // ClauDEX: only where it can work - IWindowManager.freezeRotation needs
+            // SET_ORIENTATION (signature); without it every call was reflection,
+            // a binder call and a swallowed SecurityException per window change
+            if (canFreezeRotation && sharedPreferences.getBoolean("lock_landscape", true)) {
                 DeviceUtils.freezeRotation(true)
             }
             if (Build.VERSION.SDK_INT >= 28) {
@@ -3431,7 +3438,16 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     // DockAppAdapter draw indicators based on data that's no
                     // longer being refreshed.
                     AppUtils.trulyRunningPackages = null
-                    AppUtils.getRecentTasks(context, nApps)
+                    // ClauDEX: favorites only and already seeded, the 24 h
+                    // history is thrown away (its tasks all have id -1, they
+                    // mark nothing open) - yet it cost a UsageStats query, an
+                    // intent resolution per app and an icon load per app on
+                    // every dock refresh (logcat: each of Chrome's and Pokemon
+                    // GO's APK splits loaded and freed over and over)
+                    if (sharedPreferences.getBoolean("dock_favorites_only", true) &&
+                        sharedPreferences.getBoolean("claudex_dock_seeded_v1", false)
+                    ) ArrayList()
+                    else AppUtils.getRecentTasks(context, nApps)
                 }
             }
 
@@ -4520,13 +4536,26 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 }
                 AppUtils.resizeTaskTo(context, target, task.id)
                 Thread.sleep(700)
-                val got = stackTasks(shizuku).firstOrNull { it.id == task.id }?.bounds
+                var got = stackTasks(shizuku).firstOrNull { it.id == task.id }?.bounds
+                // measured on a SM-A055M: a resize right after Waze opened was not
+                // applied at all (got == landed, [19,83][1529,665]); once more
+                if (got != null && sizeDistance(got, a) <= 8) {
+                    Thread.sleep(600)
+                    AppUtils.resizeTaskTo(context, target, task.id)
+                    Thread.sleep(700)
+                    got = stackTasks(shizuku).firstOrNull { it.id == task.id }?.bounds
+                }
                 com.youki.dex.utils.EventJournal.log(context,
                     "fit $pkg task=${task.id} landed=${a.toShortString()} -> ${target.toShortString()} got=${got?.toShortString()}")
-                // shifted down with the height kept: that top is the floor
-                // (55 on the SM-A055M, no inset reports it) - learn it and
-                // pull the bottom back inside
-                if (got != null && got.top > target.top && got.height() == target.height()) {
+                // shifted STRAIGHT down with the height kept: that top is the
+                // floor (55 on the SM-A055M, no inset reports it) - learn it and
+                // pull the bottom back inside. Same left/right edges required:
+                // reading an unapplied resize (Waze still at its own cascade
+                // spot, top 83) as a shift taught a floor of 83 and every window
+                // after it lost 28 px at the top.
+                if (got != null && got.left == target.left && got.right == target.right &&
+                    got.top > target.top && got.height() == target.height()
+                ) {
                     sharedPreferences.edit().putInt(freeformMinTopKey(), got.top).apply()
                     AppUtils.resizeTaskTo(context, android.graphics.Rect(target.left, got.top, target.right, target.bottom), task.id)
                     com.youki.dex.utils.EventJournal.log(context, "fit $pkg: floor ${got.top} learned, bottom pulled back")
@@ -4544,6 +4573,20 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
      * Modes only an explicit choice produces (maximized/portrait/fullscreen)
      * are kept.
      */
+    /** One-time: forget a freeform top floor learned from an unapplied resize
+     *  (see fitToPlan) - it is learned again from the next real launch. */
+    private fun migrateFloorReset() {
+        val key = "claudex_floor_reset_v1"
+        if (sharedPreferences.getBoolean(key, false)) return
+        val was = "${sharedPreferences.getInt("freeform_min_top_1", 0)}/${sharedPreferences.getInt("freeform_min_top_2", 0)}"
+        sharedPreferences.edit {
+            remove("freeform_min_top_1")
+            remove("freeform_min_top_2")
+            putBoolean(key, true)
+        }
+        com.youki.dex.utils.EventJournal.log(this, "migration: freeform floor reset (was $was)")
+    }
+
     private fun migrateRememberedLaunchModes() {
         val key = "claudex_launch_modes_migrated_v1"
         if (sharedPreferences.getBoolean(key, false)) return
@@ -5588,9 +5631,12 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
         // SYSTEM_ALERT_WINDOW in the manifest is necessary but NOT sufficient —
         // the user must also grant it via Settings. Without this guard, the
         // service crashes with BadTokenException (window type 2038 denied).
-        if (Settings.canDrawOverlays(this)) {
-            windowManager.addView(notificationLayout, notificationLayoutParams)
-        }
+        // ClauDEX: the popup window is added only when a popup is actually
+        // shown (showNotification re-adds it, hideNotification removes it). Kept
+        // registered and VISIBLE at alpha 0 while desktop mode was on, it was an
+        // invisible touchable 300 dp strip at the bottom center that ate every
+        // touch starting in it - measured on a SM-A055M: a scroll starting there
+        // did not reach the Chrome window below, the same scroll 240 px higher did.
         handler = Handler(Looper.getMainLooper())
         notificationLayout.alpha = 0f
         notificationLayout.setOnHoverListener { _, event ->
@@ -5609,19 +5655,6 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
             IntentFilter(DOCK_SERVICE_ACTION),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
-        // If DockService already started before us, activate immediately.
-        // Guard with canDrawOverlays — permission may not be granted yet.
-        if (sharedPreferences.getBoolean("dex_mode_active", false)
-            && Settings.canDrawOverlays(this)
-        ) {
-            try {
-                if (notificationLayout.windowToken == null)
-                    windowManager.addView(notificationLayout, notificationLayoutParams)
-                notificationLayout.visibility = View.VISIBLE
-            } catch (e: Exception) {
-                notificationLayout.visibility = View.GONE
-            }
-        }
     }
 
     override fun onListenerConnected() {
@@ -6974,15 +7007,7 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
                 ACTION_SHOW_NOTIFICATION_BAR -> {
                     // Mark desktop mode as active so popups are allowed
                     sharedPreferences.edit { putBoolean("dex_mode_active", true) }
-                    // FIX: guard addView — overlay permission may be revoked at runtime
-                    if (!Settings.canDrawOverlays(p1)) return
-                    try {
-                        if (notificationLayout.windowToken == null)
-                            windowManager.addView(notificationLayout, notificationLayoutParams)
-                        notificationLayout.visibility = View.VISIBLE
-                    } catch (e: Exception) {
-                        notificationLayout.visibility = View.GONE
-                    }
+                    // ClauDEX: no window until a popup shows (see onCreate)
                 }
                 ACTION_STOP_NOTIFICATION_SERVICE -> {
                     // DockService is shutting down — disconnect the notification listener too
