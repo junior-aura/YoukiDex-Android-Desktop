@@ -744,11 +744,39 @@ object AppUtils {
         resizeTaskTo(context, makeLaunchBounds(context, mode, dockHeight), taskId)
     }
 
-    /** ClauDEX: same shell fallback chain, for an explicit rectangle. */
+    /**
+     * ROM has `am task set-windowing-mode` - probed once through Shizuku. Null
+     * = not probed yet. Absent on a SM-A055M (One UI, Android 15).
+     */
+    @Volatile private var hasSetWindowingMode: Boolean? = null
+
+    /**
+     * ClauDEX: resize another app's task, for an explicit rectangle.
+     *
+     * With Shizuku this is ONE `am task resize` call. Measured on a SM-A055M,
+     * the old fallback chain cost ~860 ms per window (tiling three windows took
+     * 1.4-1.6 s each): it first ran `am` as this app, which can never touch
+     * another app's task, then slept 150 ms; then asked Shizuku for
+     * `set-windowing-mode`, which that ROM does not have, and slept 200 ms;
+     * each `am` is ~100 ms of process start. The chain is kept below for
+     * builds without Shizuku (system app, root).
+     */
     fun resizeTaskTo(context: Context, bounds: Rect, taskId: Int) {
         if (taskId < 0) return
         val modeCmd   = "am task set-windowing-mode $taskId 5"
         val resizeCmd = "am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}"
+
+        try {
+            val shizuku = ShizukoManager.getInstance(context)
+            if (shizuku.hasPermission) {
+                if (hasSetWindowingMode == null)
+                    hasSetWindowingMode = shizuku.runShellSync("am help 2>&1 | grep -c set-windowing-mode")
+                        ?.trim()?.toIntOrNull()?.let { it > 0 } ?: false
+                val cmd = if (hasSetWindowingMode == true) "$modeCmd; $resizeCmd" else resizeCmd
+                shizuku.runShellSync(cmd)
+                return
+            }
+        } catch (e: Exception) {}
 
         // Gap 16: we read stderr instead of the unreliable exitValue()
         try {

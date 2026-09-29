@@ -296,6 +296,12 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     // and hideDock() clear every dockHandler message, and the on-demand dock
     // hides on each launch - which silently cancelled these checks.
     private val launchHandler = Handler(Looper.getMainLooper())
+    private val inputMethodPackages: Set<String> by lazy {
+        try {
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .inputMethodList.map { it.packageName }.toSet()
+        } catch (e: Exception) { emptySet() }
+    }
     private val canFreezeRotation by lazy {
         checkSelfPermission("android.permission.SET_ORIENTATION") == PackageManager.PERMISSION_GRANTED
     }
@@ -1469,6 +1475,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 && pkg != packageName
                 && pkg != AppUtils.getCurrentLauncher(packageManager)
                 && !pkg.contains("com.android.systemui")
+                // the keyboard is not the app in focus (journal, SM-A055M:
+                // "focus rkr.simplekeyboard.inputmethod" moved the dock's
+                // active mark and the expand target off the app being typed in)
+                && pkg !in inputMethodPackages
             ) {
                 if (AppUtils.currentApp != pkg) {
                     AppUtils.currentApp = pkg
