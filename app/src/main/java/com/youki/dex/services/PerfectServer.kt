@@ -1130,6 +1130,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             pinDock()
         else
             Toast.makeText(context, R.string.start_message, Toast.LENGTH_LONG).show()
+        applyOrientationMode()
 
         // FIX: مشكلة الرزلوشن — تغيير الدقة/DPI من إعدادات النظام لا يُطلق onConfigurationChanged
         // الحل: نستمع لـ DisplayManager مباشرة فيشتغل الدوك صح بعد أي تغيير في الشاشة
@@ -1754,6 +1755,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     private fun showDock() {
+        // ClauDEX: in portrait the side rail stands in for the dock
+        if (portraitRail()) { dock.visibility = View.GONE; dockHandle.visibility = View.GONE; return }
         dock.visibility = View.VISIBLE
         dockHandle.visibility = View.GONE
 
@@ -1860,7 +1863,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     // Handle mode is the only mode now — it fully GONEs the dock window
                     // and shows a small, actually-visible handle button instead.
                     dock.visibility = View.GONE
-                    dockHandle.visibility = View.VISIBLE
+                    dockHandle.visibility = if (portraitRail()) View.GONE else View.VISIBLE
                 }
             }
         }, delay.toLong())
@@ -2962,7 +2965,40 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // Swipe mode removed — see hideDock() for why. Handle mode only now.
         if (!isPinned) {
             dock.visibility = View.GONE
-            dockHandle.visibility = View.VISIBLE
+            dockHandle.visibility = if (portraitRail()) View.GONE else View.VISIBLE
+        }
+    }
+
+    // ── Portrait side rail (panels/SideRail.kt) ───────────────────────────
+    // In portrait the system nav bar is at the bottom and a bottom dock covered
+    // its Back/Recents buttons (owner, 29/09): the dock and its handle step
+    // aside and a rail on the right edge takes over. Landscape is unchanged.
+    private val sideRail by lazy {
+        com.youki.dex.panels.SideRail(
+            context, windowManager, sharedPreferences,
+            favorites = { if (::pinnedApps.isInitialized) ArrayList(pinnedApps) else emptyList() },
+            onOpen = { app -> launchApp(getDefaultLaunchMode(app.packageName), app.packageName) },
+            onWindows = { showSwitcher() },
+            onOptions = { quickPanel.toggle() }
+        )
+    }
+
+    private fun portraitRail(): Boolean =
+        resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT &&
+            sharedPreferences.getBoolean("portrait_side_rail", true)
+
+    private fun applyOrientationMode() {
+        if (!::dockLayout.isInitialized) return
+        if (portraitRail()) {
+            // even a pinned dock: it is what covered the nav buttons
+            dock.visibility = View.GONE
+            dockHandle.visibility = View.GONE
+            sideRail.enable()
+        } else {
+            sideRail.disable()
+            if (isPinned) showDock()
+            else if (dock.visibility != View.VISIBLE) dockHandle.visibility = View.VISIBLE
+            if (isOnDemandDock()) scheduleOnDemandEval(300)
         }
     }
 
@@ -3459,6 +3495,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         if (newConfig.orientation != orientation) {
             lastRotationAt = System.currentTimeMillis()
             journalState("config orientation=${newConfig.orientation}")
+            // the rail reads resources.configuration, updated after this callback
+            launchHandler.post { applyOrientationMode() }
         }
         orientation = newConfig.orientation
         // GUARD: this can fire before onServiceConnected finishes setting up
@@ -5089,6 +5127,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         launchHandler.removeCallbacksAndMessages(null)
         onDemandHandler.removeCallbacksAndMessages(null)
         try { quickPanel.dismiss() } catch (e: Exception) {}
+        try { sideRail.disable() } catch (e: Exception) {}
         castManager?.destroy()
         DeviceUtils.hideStatusBar(this, false)
         // Previously broken (stuck in landscape until Force Stop): freezeRotation(true) is
