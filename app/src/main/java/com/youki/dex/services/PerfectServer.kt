@@ -1309,7 +1309,11 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // running task — no point offering to close something that isn't
         // running, and findRunningTaskId returning -1 for it would make
         // the click handler's AppUtils.closeTask call a silent no-op anyway.
-        if (findRunningTaskId(app.packageName) != -1)
+        // ClauDEX: findRunningTaskId only sees this app's own tasks; the dock
+        // entry carries the real ones (am stack list, see updateRunningTasks)
+        if ((app as? com.youki.dex.models.DockApp)?.tasks?.any { it.id != -1 } == true ||
+            findRunningTaskId(app.packageName) != -1
+        )
             actions.add(Action(R.drawable.ic_close, getString(R.string.close)))
 
         return actions
@@ -3460,7 +3464,20 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     // GO's APK splits loaded and freed over and over)
                     if (sharedPreferences.getBoolean("dock_favorites_only", true) &&
                         sharedPreferences.getBoolean("claudex_dock_seeded_v1", false)
-                    ) ArrayList()
+                    ) {
+                        // ...and what the dock does need is which favorites are
+                        // OPEN: without real task ids it drew no open mark and
+                        // its app menu had no Close or window modes (measured:
+                        // only "Unpin / Move" for an open Chrome). One stack
+                        // read (~100 ms, off the main thread), matched to the
+                        // favorites and reusing their loaded icons.
+                        val favs = pinnedSnapshot.associateBy { it.packageName }
+                        if (shizuku.hasPermission)
+                            ArrayList(stackTasks(shizuku, includeHidden = true).mapNotNull { t ->
+                                favs[t.pkg]?.let { AppTask(t.id, it.name, t.pkg, it.icon) }
+                            })
+                        else ArrayList()
+                    }
                     else AppUtils.getRecentTasks(context, nApps)
                 }
             }
