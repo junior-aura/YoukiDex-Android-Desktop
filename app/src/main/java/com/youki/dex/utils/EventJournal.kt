@@ -31,7 +31,9 @@ object EventJournal {
     fun log(context: Context, msg: String) {
         Log.i(TAG, msg)
         val app = context.applicationContext
-        val line = "${stamp.format(Date())}|$msg\n"
+        // one event per line: shell output inside a message ("svc data enable"
+        // prints "enable: Success") broke lines and read as bogus events
+        val line = "${stamp.format(Date())}|${msg.trim().replace('\n', ' ')}\n"
         writer.execute {
             try {
                 val dir = app.getExternalFilesDir(null) ?: return@execute

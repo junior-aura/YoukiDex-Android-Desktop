@@ -1404,12 +1404,25 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // read as not open and the "fullscreen" launch just brought it
             // front, still a window
             val open = stackTasks(shizuku, includeHidden = true).firstOrNull { it.pkg == app.packageName }
-            com.youki.dex.utils.EventJournal.log(context, "dock: swipe-up ${app.packageName} open=${open?.id}")
+            val mode = open?.let { taskWindowingMode(shizuku, it.id) }
+            com.youki.dex.utils.EventJournal.log(context, "dock: swipe-up ${app.packageName} open=${open?.id} mode=$mode")
             if (open == null) {
                 launchHandler.post { launchApp("fullscreen", app.packageName, rememberMode = false) }
             } else {
                 try { activityManager.moveTaskToFront(open.id, 0) } catch (e: Exception) {}
-                AppUtils.resizeTaskTo(context, area, open.id)
+                if (mode == "freeform") {
+                    // swipe up means FULLSCREEN: measured on a SM-A055M, the owner
+                    // swiped an open window up four times in 12 s when all it did
+                    // was fill the area. The shell cannot make a window
+                    // fullscreen; the window's own Maximize button can.
+                    launchHandler.postDelayed({
+                        com.youki.dex.utils.CaptionControl.press(this@DockService, open.bounds,
+                            com.youki.dex.utils.CaptionControl.MAXIMIZE) { pressed ->
+                            com.youki.dex.utils.EventJournal.log(context, "dock: swipe-up ${app.packageName} maximize=$pressed")
+                            if (!pressed) Thread { AppUtils.resizeTaskTo(context, area, open.id) }.start()
+                        }
+                    }, 350)
+                } else if (mode != "fullscreen") AppUtils.resizeTaskTo(context, area, open.id)
             }
         }.start()
         if (isOnDemandDock()) dockLaunchedApp()
@@ -4989,7 +5002,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             Toast.makeText(this, R.string.snap_needs_shizuku, Toast.LENGTH_LONG).show()
             return
         }
-        val area = smartAvailableArea()
+        var area = smartAvailableArea()
         val minSide = Utils.dpToPx(context, 220)
         val focused = AppUtils.currentApp
         snapQuietUntil = System.currentTimeMillis() + 3000
@@ -4998,9 +5011,19 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             // Minimized windows count too (One UI turns them into a floating
             // bubble on HOME; measured: tiling visible-only skipped Calendar)
             // and are brought back before being placed.
-            val tasks = stackTasks(shizuku, includeHidden = true).distinctBy { it.id }
+            fun windows() = stackTasks(shizuku, includeHidden = true).distinctBy { it.id }
                 .filter { isFreeformTask(shizuku, it.id) }
                 .sortedBy { if (it.pkg == focused) 0 else 1 }
+            var tasks = windows()
+            if (tasks.isEmpty()) {
+                // measured: "tile: 0 windows" over a fullscreen Pokemon GO - the
+                // app in front was not a window. Make it one, then tile.
+                val full = stackTasks(shizuku).firstOrNull { taskWindowingMode(shizuku, it.id) == "fullscreen" }
+                if (full != null && convertToWindow(full.pkg)) {
+                    area = mainArea()
+                    tasks = windows()
+                }
+            }
             val cells = com.youki.dex.utils.WindowSnapper.tile(area, tasks.size, minSide)
             tasks.zip(cells).reversed().forEach { (task, cell) ->
                 restoreBounds[task.id] = android.graphics.Rect(task.bounds)
@@ -5015,6 +5038,28 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     // ── Expand / restore the focused window (dock button) ─────────────────
     private val restoreBounds = HashMap<Int, android.graphics.Rect>()
 
+    /**
+     * Background thread: turns [pkg]'s fullscreen task into a window by launching
+     * it again (see openFavorite), and waits for it to settle - the display
+     * usually rotates back to the landscape desktop. False when the app would
+     * open a second task instead.
+     */
+    private fun convertToWindow(pkg: String): Boolean {
+        if (relaunchMakesNewTask(pkg)) return false
+        launchHandler.post { launchApp(null, pkg) }
+        Thread.sleep(1600)
+        return true
+    }
+
+    /** smartAvailableArea() read on the main thread, from a background thread. */
+    private fun mainArea(): android.graphics.Rect {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var r = android.graphics.Rect()
+        launchHandler.post { r = smartAvailableArea(); latch.countDown() }
+        latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        return r
+    }
+
     private fun toggleExpandFocused() {
         val shizuku = com.youki.dex.utils.ShizukoManager.getInstance(context)
         if (!shizuku.hasPermission) {
@@ -5027,6 +5072,21 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         Thread {
             val tasks = stackTasks(shizuku)
             val task = tasks.firstOrNull { it.pkg == focused } ?: tasks.firstOrNull() ?: return@Thread
+            if (taskWindowingMode(shizuku, task.id) == "fullscreen") {
+                // measured on a SM-A055M: on a fullscreen Pokemon GO, expand did
+                // nothing (am task resize acts on windows only) and the owner
+                // pressed it three times. Make it a window that fills the area.
+                if (!convertToWindow(task.pkg)) {
+                    com.youki.dex.utils.EventJournal.log(context, "expand: ${task.pkg} fullscreen, would open a second task - left as is")
+                    return@Thread
+                }
+                val a = mainArea()
+                val t = stackTasks(shizuku, includeHidden = true).firstOrNull { it.pkg == task.pkg } ?: return@Thread
+                AppUtils.resizeTaskTo(context, a, t.id)
+                com.youki.dex.utils.EventJournal.log(context, "expand: task ${t.id} ${t.pkg} fullscreen -> window ${a.toShortString()}")
+                snapQuietUntil = System.currentTimeMillis() + 1500
+                return@Thread
+            }
             val expanded = android.graphics.Rect(area)
             val isExpanded = Math.abs(task.bounds.left - expanded.left) <= 4 &&
                 Math.abs(task.bounds.right - expanded.right) <= 4 &&

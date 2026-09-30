@@ -1080,6 +1080,7 @@ To uninstall, remove Device Administrator permission first.</string>
     <string name="dock_on_demand_summary">Shown on an empty desktop, hidden while apps are open. Swipe up from the bottom edge to call it. Restart DEX after changing.</string>
     <string name="launch_smart">Automatic</string>
     <string name="snap_needs_shizuku">Snapping and expanding windows need Shizuku running</string>
+    <string name="shizuku_stopped">Shizuku stopped: window arranging is paused until it is started again</string>
     <string name="expand_window">Expand or restore the focused window</string>
     <string name="tile_windows">Arrange open windows side by side</string>
     <string name="switcher_title">Open windows</string>

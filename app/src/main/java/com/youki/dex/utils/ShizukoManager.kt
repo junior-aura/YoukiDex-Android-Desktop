@@ -239,6 +239,12 @@ class ShizukoManager private constructor(private val context: Context) {
         _permissionGranted = false
         EventJournal.log(context, "shizuku binder dead")
         internalScope.launch(Dispatchers.Main) {
+            // ClauDEX: say so. Measured on a SM-A055M: switching adb to Wi-Fi
+            // (`adb tcpip`) restarts adbd and takes the Shizuku server down with
+            // it; the window features then stopped silently for 1 h 20 min.
+            if (isActiveBuild()) try {
+                android.widget.Toast.makeText(context, com.youki.dex.R.string.shizuku_stopped, android.widget.Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {}
             unboundListeners.values.forEach { it() }
             onUnbound?.invoke()
         }
