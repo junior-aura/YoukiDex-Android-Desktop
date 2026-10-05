@@ -844,7 +844,9 @@
     <string name="dock_on_demand_summary">Aparece com a área de trabalho vazia e se esconde com apps abertos. Deslize para cima na borda inferior para chamá-la. Reinicie o DEX depois de mudar.</string>
     <string name="launch_smart">Automático</string>
     <string name="snap_needs_shizuku">Encaixar e expandir janelas precisa do Shizuku ativo</string>
-    <string name="shizuku_stopped">O Shizuku parou: a organização das janelas fica pausada até ele ser iniciado de novo</string>
+    <string name="shizuku_notice_channel">Estado do Shizuku</string>
+    <string name="shizuku_notice_title">O Shizuku parou</string>
+    <string name="shizuku_notice_text">A organização das janelas está pausada. Toque para abrir o Shizuku e iniciá-lo de novo (depuração sem fio).</string>
     <string name="expand_window">Expandir ou restaurar a janela em foco</string>
     <string name="tile_windows">Organizar janelas abertas lado a lado</string>
     <string name="switcher_title">Janelas abertas</string>

@@ -1145,6 +1145,14 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         else
             Toast.makeText(context, R.string.start_message, Toast.LENGTH_LONG).show()
         applyOrientationMode()
+        // started (or restarted by the system) while Shizuku was already down:
+        // no "binder dead" will ever come, so check once it had time to bind
+        launchHandler.postDelayed({
+            if (!com.youki.dex.utils.ShizukoManager.getInstance(context).isAvailable) {
+                com.youki.dex.utils.EventJournal.log(context, "shizuku not running 30 s after start")
+                com.youki.dex.utils.ShizukuNotice.show(context)
+            }
+        }, 30_000)
 
         // FIX: مشكلة الرزلوشن — تغيير الدقة/DPI من إعدادات النظام لا يُطلق onConfigurationChanged
         // الحل: نستمع لـ DisplayManager مباشرة فيشتغل الدوك صح بعد أي تغيير في الشاشة
