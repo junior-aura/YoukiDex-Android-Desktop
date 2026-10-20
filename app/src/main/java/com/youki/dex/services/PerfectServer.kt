@@ -296,6 +296,32 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     // and hideDock() clear every dockHandler message, and the on-demand dock
     // hides on each launch - which silently cancelled these checks.
     private val launchHandler = Handler(Looper.getMainLooper())
+    /** The dock's resting y: above a bottom navigation bar (see placeDockAboveNav). */
+    private var dockBaseY = 0
+
+    /** Navigation bar inset on the BOTTOM edge only, 0 when the bar is on a side or absent. */
+    private fun bottomNavInset(): Int {
+        if (Build.VERSION.SDK_INT < 30) return 0
+        return try {
+            (getSystemService(Context.WINDOW_SERVICE) as WindowManager).maximumWindowMetrics.windowInsets
+                .getInsetsIgnoringVisibility(android.view.WindowInsets.Type.navigationBars()).bottom
+        } catch (e: Exception) { 0 }
+    }
+
+    /** A bottom dock rests on top of a bottom navigation bar; re-run when the screen rotates. */
+    private fun placeDockAboveNav() {
+        if (!::dockLayoutParams.isInitialized || Build.VERSION.SDK_INT < 30) return
+        if (sharedPreferences.getBoolean("round_dock", false)) return
+        if (com.youki.dex.utils.DockPositionUtils.get(sharedPreferences) == com.youki.dex.utils.DockPositionUtils.Position.TOP) return
+        val nav = bottomNavInset()
+        dockBaseY = nav
+        if (dockLayoutParams.y != nav) {
+            dockLayoutParams.y = nav
+            safeUpdateViewLayout(dock, dockLayoutParams)
+            com.youki.dex.utils.EventJournal.log(context, "dock: above bottom nav, y=$nav")
+        }
+    }
+
     private val inputMethodPackages: Set<String> by lazy {
         try {
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
@@ -794,16 +820,18 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // top-docked or floating/rounded dock: gravity=TOP has no gesture
         // bar to clear, and the rounded/centered case already gets its
         // margin from dockMargin above, not the nav bar.
-        if (Build.VERSION.SDK_INT >= 35 && !isRoundOnStartup && dockPosition != com.youki.dex.utils.DockPositionUtils.Position.TOP) {
+        // ClauDEX: by the navigation bar's BOTTOM inset, and on every API that
+        // reports it. getNavBarHeight() is the bar's size whichever edge it is
+        // on (a phone in landscape keeps it on the side), and below 35 nothing
+        // lifted the dock at all - on a tablet, whose bar stays at the bottom in
+        // both orientations, the dock would sit on Back/Home. Measured on a
+        // SM-A055M in landscape: inset 0 (bar on the right), so no change there.
+        if (Build.VERSION.SDK_INT >= 30 && !isRoundOnStartup && dockPosition != com.youki.dex.utils.DockPositionUtils.Position.TOP) {
             dock.viewTreeObserver.addOnGlobalLayoutListener(object :
                 android.view.ViewTreeObserver.OnGlobalLayoutListener {
                 override fun onGlobalLayout() {
                     dock.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                    val navHeight = DeviceUtils.getNavBarHeight(context)
-                    if (navHeight > 0 && dockLayoutParams.y != navHeight) {
-                        dockLayoutParams.y = navHeight
-                        try { windowManager.updateViewLayout(dock, dockLayoutParams) } catch (e: Exception) {}
-                    }
+                    placeDockAboveNav()
                 }
             })
         }
@@ -826,11 +854,16 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         // the original code wanted while ensuring the dock is never
         // physically overlapped/hidden by the keyboard.
         if (Build.VERSION.SDK_INT >= 30) {
-            val originalDockY = dockLayoutParams.y
+            dockBaseY = dockLayoutParams.y
             dock.setOnApplyWindowInsetsListener { view, insets ->
                 val imeInsets = insets.getInsets(android.view.WindowInsets.Type.ime())
                 val imeVisible = insets.isVisible(android.view.WindowInsets.Type.ime())
-                val newY = if (imeVisible) originalDockY + imeInsets.bottom else originalDockY
+                // dockBaseY, not the y captured here: placeDockAboveNav moves
+                // it later, and closing the keyboard used to drop the dock
+                // back onto the navigation bar
+                // (the IME inset is measured from the screen edge, the nav bar
+                // included - the larger of the two, not their sum)
+                val newY = if (imeVisible) maxOf(dockBaseY, imeInsets.bottom) else dockBaseY
                 if (dockLayoutParams.y != newY) {
                     dockLayoutParams.y = newY
                     try { windowManager.updateViewLayout(view, dockLayoutParams) } catch (e: Exception) {}
@@ -2140,7 +2173,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 return
             }
 
-            com.youki.dex.utils.EventJournal.log(context, "launch $packageName mode=$launchMode smart=$smartBounds")
+            // a shortcut launches by intent, with no package name: take it from the component
+            val launched = packageName ?: intent?.component?.packageName ?: intent?.`package`
+            com.youki.dex.utils.EventJournal.log(context, "launch $launched mode=$launchMode smart=$smartBounds")
             if (smartFill != null && packageName != null)
                 fitToPlan(packageName, smartFill, smartBefore)
 
@@ -3051,6 +3086,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             sideRail.enable()
         } else {
             sideRail.disable()
+            placeDockAboveNav()
             if (isPinned) showDock()
             else if (dock.visibility != View.VISIBLE) dockHandle.visibility = View.VISIBLE
             if (isOnDemandDock()) scheduleOnDemandEval(300)
@@ -5201,7 +5237,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 com.youki.dex.utils.DockPositionUtils.Position.TOP)
                 area.top = maxOf(area.top, dockHeight)
             else
-                area.bottom = minOf(area.bottom, h - dockHeight)
+                area.bottom = minOf(area.bottom, h - bottomNavInset() - dockHeight)
         }
         return area
     }
